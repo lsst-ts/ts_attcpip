@@ -19,14 +19,21 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-try:
-    from .version import *
-except ImportError:
-    __version__ = "?"
+__all__ = ["Ack", "CommonCommandArgument"]
 
-from .at_server_simulator import *
-from .at_simulator import *
-from .command_issued import *
-from .csc import *
-from .enums import *
-from .schemas import *
+import enum
+
+
+class Ack(str, enum.Enum):
+    ACK = "ack"
+    FAIL = "fail"
+    NOACK = "noack"
+    SUCCESS = "success"
+
+
+class CommonCommandArgument(str, enum.Enum):
+    """Enum containing all common command arguments."""
+
+    ID = "id"
+    SEQUENCE_ID = "sequence_id"
+    VALUE = "value"

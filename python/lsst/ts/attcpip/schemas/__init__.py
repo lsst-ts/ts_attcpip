@@ -19,14 +19,4 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-try:
-    from .version import *
-except ImportError:
-    __version__ = "?"
-
-from .at_server_simulator import *
-from .at_simulator import *
-from .command_issued import *
-from .csc import *
-from .enums import *
-from .schemas import *
+from .registry import *

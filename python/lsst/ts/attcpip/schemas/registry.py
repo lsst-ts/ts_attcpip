@@ -19,14 +19,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-try:
-    from .version import *
-except ImportError:
-    __version__ = "?"
+__all__ = ["load_schemas", "registry", "JSON_SCHEMA_EXTENSION"]
 
-from .at_server_simulator import *
-from .at_simulator import *
-from .command_issued import *
-from .csc import *
-from .enums import *
-from .schemas import *
+import json
+import pathlib
+import typing
+
+JSON_SCHEMA_EXTENSION = ".json"
+
+registry: dict[str, typing.Any] = dict()
+
+
+def load_schemas(schema_dir: pathlib.Path | None) -> None:
+    if schema_dir is None:
+        raise RuntimeError(f"{schema_dir=} cannot be None.")
+    for file in list(schema_dir.glob(f"*{JSON_SCHEMA_EXTENSION}")):
+        schema_name = file.name.replace(JSON_SCHEMA_EXTENSION, "")
+        with open(file, "r") as f:
+            schema = json.load(f)
+            registry[schema_name] = schema
