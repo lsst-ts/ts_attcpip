@@ -19,14 +19,21 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Sphinx configuration file for an LSST stack package.
+__all__ = ["Ack", "CommonCommandArgument"]
 
-This configuration only affects single-package Sphinx documentation builds.
-"""
+import enum
 
-from documenteer.conf.pipelinespkg import *  # type: ignore # noqa
 
-project = "ts_attcpip"
-html_theme_options["logotext"] = project  # type: ignore # noqa
-html_title = project
-html_short_title = project
+class Ack(str, enum.Enum):
+    ACK = "ack"
+    FAIL = "fail"
+    NOACK = "noack"
+    SUCCESS = "success"
+
+
+class CommonCommandArgument(str, enum.Enum):
+    """Enum containing all common command arguments."""
+
+    ID = "id"
+    SEQUENCE_ID = "sequence_id"
+    VALUE = "value"
