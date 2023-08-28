@@ -38,23 +38,31 @@ from .schemas import registry
 
 
 class AtSimulator:
-    """Common code for simulating an AT system."""
+    """Common code for simulating an AT system.
 
-    def __init__(self) -> None:
+    Attributes
+    ----------
+    host : `str`
+        The simulator host.
+    cmd_evt_port : `int`
+        The command and events port.
+    telemetry_port : `int`
+        The telemetry port.
+    """
+
+    def __init__(self, host: str, cmd_evt_port: int, telemetry_port: int) -> None:
         self.log = logging.getLogger(type(self).__name__)
-        # TODO DM-38912 Set "port" via configuration.
         self.cmd_evt_server = AtServerSimulator(
-            host=tcpip.LOCALHOST_IPV4,
-            port=5000,
+            host=host,
+            port=cmd_evt_port,
             log=self.log,
             dispatch_callback=self.cmd_evt_dispatch_callback,
             connect_callback=self.cmd_evt_connect_callback,
             name="CmdEvtServer",
         )
-        # TODO DM-38912 Set "port" via configuration.
         self.telemetry_server = AtServerSimulator(
             host=tcpip.LOCALHOST_IPV4,
-            port=6000,
+            port=telemetry_port,
             log=self.log,
             dispatch_callback=self.telemetry_dispatch_callback,
             connect_callback=self.telemetry_connect_callback,
