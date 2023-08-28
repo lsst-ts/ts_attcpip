@@ -22,6 +22,8 @@
 __all__ = ["AtTcpipCsc"]
 
 import asyncio
+import pathlib
+import types
 import typing
 
 from lsst.ts import salobj, tcpip, utils
@@ -31,11 +33,11 @@ from .command_issued import CommandIssued
 from .enums import Ack, CommonCommandArgument
 
 
-class AtTcpipCsc(salobj.BaseCsc):
-    """Base CSC with common code.
+class AtTcpipCsc(salobj.ConfigurableCsc):
+    """Base Configurable CSC with common code.
 
-    The base CSC is intended to be used by systems that connect to the AuxTel
-    LabVIEW servers via TCP/IP, like ATMCS and ATPneumatics.
+    The base Configurable CSC is intended to be used by systems that connect to
+    the AuxTel LabVIEW servers via TCP/IP, like ATMCS and ATPneumatics.
 
     Parameters
     ----------
@@ -74,21 +76,23 @@ class AtTcpipCsc(salobj.BaseCsc):
     def __init__(
         self,
         name: str,
-        index: int | None = None,
+        index: int | None,
+        config_schema: dict[str, typing.Any],
+        config_dir: str | pathlib.Path | None = None,
         check_if_duplicate: bool = False,
         initial_state: salobj.State | int | None = None,
         override: str = "",
         simulation_mode: int = 0,
-        allow_missing_callbacks: bool = False,
     ) -> None:
         super().__init__(
             name=name,
             index=index,
+            config_schema=config_schema,
+            config_dir=config_dir,
             check_if_duplicate=check_if_duplicate,
             initial_state=initial_state,
             override=override,
             simulation_mode=simulation_mode,
-            allow_missing_callbacks=allow_missing_callbacks,
         )
 
         # TCP/IP clients for commands/events and for telemetry.
@@ -112,25 +116,41 @@ class AtTcpipCsc(salobj.BaseCsc):
         # Iterator for command sequence_id.
         self._command_sequence_id_generator = utils.index_generator()
 
+        self.config: types.SimpleNamespace | None = None
+
+    async def configure(self, config: typing.Any) -> None:
+        self.config = config
+
+    @staticmethod
+    def get_config_pkg() -> str:
+        return "ts_config_attcs"
+
     @property
     def connected(self) -> bool:
         return self.cmd_evt_client.connected and self.telemetry_client.connected
 
     async def handle_summary_state(self) -> None:
+        """Called when the summary state has changed."""
         if self.summary_state in (salobj.State.DISABLED, salobj.State.ENABLED):
             await self.start_clients()
         else:
             await self.stop_clients()
 
     async def start_clients(self) -> None:
+        """Start the clients for the TCP/IPconnections as well as background
+        tasks.
+
+        If simulator_mode == 1 then the simulator gets initialized and started
+        as well.
+        """
         if self.connected:
             self.log.warning("Already connected. Ignoring.")
             return
 
-        # TODO DM-38912 Get this from the configuration.
-        host = ""
-        cmd_evt_port = 0
-        telemetry_port = 0
+        assert self.config is not None
+        host = self.config.host
+        cmd_evt_port = self.config.cmd_evt_port
+        telemetry_port = self.config.telemetry_port
 
         if self.simulation_mode == 1:
             assert self.simulator is not None
@@ -154,6 +174,10 @@ class AtTcpipCsc(salobj.BaseCsc):
         self._telemetry_task = asyncio.create_task(self.telemetry_loop())
 
     async def stop_clients(self) -> None:
+        """Stop all clients and background tasks.
+
+        If simulator_mode == 1 then the simulator gets stopped as well.
+        """
         if not self.connected:
             self.log.warning("Not connected. Ignoring.")
             return
