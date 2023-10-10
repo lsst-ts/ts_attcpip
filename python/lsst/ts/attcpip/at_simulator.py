@@ -1,6 +1,6 @@
 # This file is part of ts_attcpip.
 #
-# Developed for the Vera Rubin Observatory Telescope and Site Systems.
+# Developed for the Vera C. Rubin Observatory Telescope and Site Systems.
 # This product includes software developed by the LSST Project
 # (https://www.lsst.org).
 # See the COPYRIGHT file at the top-level directory of this distribution
@@ -25,6 +25,7 @@ __all__ = ["AtSimulator"]
 
 import abc
 import logging
+import pathlib
 import types
 import typing
 
@@ -33,8 +34,10 @@ import numpy as np
 from lsst.ts import tcpip
 
 from .at_server_simulator import AtServerSimulator
-from .enums import Ack, CommonCommandArgument
-from .schemas import registry
+from .enums import Ack, CommonCommand, CommonCommandArgument, SimulatorState
+from .schemas import load_schemas, registry
+
+CMD_ITEMS_TO_IGNORE = frozenset({CommonCommandArgument.ID, CommonCommandArgument.VALUE})
 
 
 class AtSimulator:
@@ -74,19 +77,29 @@ class AtSimulator:
         # a NOACK should be returned.
         self.last_sequence_id: int = 0
 
+        # The simulator state. The lifecycle of the simulator state is:
+        # - start: STANDBY -> DISABLED
+        # - enable: DISABLED -> ENABLED
+        # - disable: ENABLED -> DISABLED
+        # - standby: DISABLED -> STANDBY
+        self.simulator_state = SimulatorState.STANDBY
+
         # Dict of command: function.
-        self.dispatch_dict: dict[str, typing.Callable] = dict()
+        self.dispatch_dict: dict[str, typing.Callable] = {
+            CommonCommand.DISABLE: self.disable,
+            CommonCommand.ENABLE: self.enable,
+            CommonCommand.STANDBY: self.standby,
+            CommonCommand.START: self.disable,
+        }
 
         self.load_schemas()
 
-    @abc.abstractmethod
     def load_schemas(self) -> None:
         """Load the JSON schemas needed to validate the incoming and outgoing
         JSON messages.
-
-        Each concrete sub-class needs to implement this function.
         """
-        raise NotImplementedError
+        schema_dir = pathlib.Path(__file__).parent / "schemas"
+        load_schemas(schema_dir=schema_dir)
 
     @abc.abstractmethod
     async def cmd_evt_connect_callback(self, server: tcpip.OneClientServer) -> None:
@@ -100,16 +113,37 @@ class AtSimulator:
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     async def cmd_evt_dispatch_callback(self, data: typing.Any) -> None:
-        """Callback to call when a command is received.
+        """Asynchronous function to call when data is read and dispatched.
+
+        The received data is validated and then dispatched to the
+        corresponding function as listed in ``self.dispatch_dict``. If the data
+        is invalid then a ``noack`` response is sent back to the client and
+        the data is not dispatched.
 
         Parameters
         ----------
-        data : `typing.Any`
-            The parameters and their values for the command.
+        data : `dict`[`str`, `typing.Any`]
+            The data sent to the server.
         """
-        raise NotImplementedError
+        data_ok = await self.verify_data(data=data)
+        if not data_ok:
+            self.log.warning(f"Received incorrect {data=}.")
+            await self.write_noack_response(
+                sequence_id=data[CommonCommandArgument.SEQUENCE_ID]
+            )
+            return
+
+        await self.write_ack_response(
+            sequence_id=data[CommonCommandArgument.SEQUENCE_ID]
+        )
+
+        cmd = data[CommonCommandArgument.ID]
+        func = self.dispatch_dict[cmd]
+        kwargs = {
+            key: value for key, value in data.items() if key not in CMD_ITEMS_TO_IGNORE
+        }
+        await func(**kwargs)
 
     async def telemetry_connect_callback(self, server: tcpip.OneClientServer) -> None:
         """Callback function for when a telemetry client connects or
@@ -176,6 +210,21 @@ class AtSimulator:
             self.log.exception("Validation failed.", e)
             return False
         return True
+
+    async def disable(self, *, sequence_id: int) -> None:
+        """Switch to SimulatorState.DISABLED."""
+        self.simulator_state = SimulatorState.DISABLED
+        await self.write_success_response(sequence_id=sequence_id)
+
+    async def enable(self, *, sequence_id: int) -> None:
+        """Switch to SimulatorState.ENABLED."""
+        self.simulator_state = SimulatorState.ENABLED
+        await self.write_success_response(sequence_id=sequence_id)
+
+    async def standby(self, *, sequence_id: int) -> None:
+        """Switch to SimulatorState.STANDBY."""
+        self.simulator_state = SimulatorState.STANDBY
+        await self.write_success_response(sequence_id=sequence_id)
 
     async def _write_command_response(self, response: str, sequence_id: int) -> None:
         """Generic method to write a command response.
