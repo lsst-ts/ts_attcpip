@@ -6,6 +6,17 @@
 Version History
 ###############
 
+v0.1.2
+======
+
+* Add support for start, disable, enable and standby commands.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.1
 ======
 
@@ -15,8 +26,8 @@ v0.1.1
 Requires:
 
 * ts_salobj
-* ts_tcpip 1.1
-* ts_utils 1.0
+* ts_tcpip >= 2
+* ts_utils
 
 v0.1.0
 ======
@@ -30,5 +41,5 @@ First release of the AT TCP/IP common code package.
 Requires:
 
 * ts_salobj
-* ts_tcpip 1.1
-* ts_utils 1.0
+* ts_tcpip >= 2
+* ts_utils

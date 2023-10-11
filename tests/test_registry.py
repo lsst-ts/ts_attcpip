@@ -19,26 +19,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-__all__ = ["load_schemas", "registry", "JSON_SCHEMA_EXTENSION"]
+import unittest
 
-import json
-import pathlib
-import typing
-
-JSON_SCHEMA_EXTENSION = ".json"
-
-registry: dict[str, typing.Any] = dict()
-curr_dir = pathlib.Path(__file__).parent
+from lsst.ts import attcpip
 
 
-def load_schemas(schema_dir: pathlib.Path | None) -> None:
-    if schema_dir is None:
-        raise RuntimeError(f"{schema_dir=} cannot be None.")
-    for file in list(schema_dir.glob(f"*{JSON_SCHEMA_EXTENSION}")):
-        schema_name = file.name.replace(JSON_SCHEMA_EXTENSION, "")
-        with open(file, "r") as f:
-            schema = json.load(f)
-            registry[schema_name] = schema
+class RegistryTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_registry(self) -> None:
+        # Make sure that the expected commands are in the registry.
+        for cmd in ["disable", "enable", "standby", "start"]:
+            attcpip.registry.pop(f"command_{cmd}")
 
-
-load_schemas(curr_dir)
+        # Make sure that no other commands are in the registry.
+        assert len(attcpip.registry) == 0
