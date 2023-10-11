@@ -30,7 +30,10 @@ from lsst.ts import salobj, tcpip, utils
 
 from .at_server_simulator import AtServerSimulator
 from .command_issued import CommandIssued
-from .enums import Ack, CommonCommandArgument
+from .enums import Ack, CommonCommand, CommonCommandArgument
+
+# List of all state commands.
+STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
 
 
 class AtTcpipCsc(salobj.ConfigurableCsc):
@@ -129,12 +132,74 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     def connected(self) -> bool:
         return self.cmd_evt_client.connected and self.telemetry_client.connected
 
-    async def handle_summary_state(self) -> None:
-        """Called when the summary state has changed."""
-        if self.summary_state in (salobj.State.DISABLED, salobj.State.ENABLED):
-            await self.start_clients()
+    async def begin_disable(self, data: salobj.BaseMsgType) -> None:
+        """Begin do_disable; called before state changes.
+
+        Parameters
+        ----------
+        data : `DataType`
+            Command data
+        """
+        command = CommonCommand.DISABLE
+        if self.connected:
+            command_issued = await self.write_command(command=command)
+            await command_issued.done
         else:
-            await self.stop_clients()
+            self.log.warning(f"Not connected so not sending the {command} command.")
+
+    async def begin_enable(self, data: salobj.BaseMsgType) -> None:
+        """Begin do_enable; called before state changes.
+
+        Parameters
+        ----------
+        data : `DataType`
+            Command data
+        """
+        command = CommonCommand.ENABLE
+        if self.connected:
+            command_issued = await self.write_command(command=command)
+            await command_issued.done
+        else:
+            self.log.warning(f"Not connected so not sending the {command} command.")
+
+    async def begin_standby(self, data: salobj.BaseMsgType) -> None:
+        """Begin do_standby; called before the state changes.
+
+        Parameters
+        ----------
+        data : `DataType`
+            Command data
+        """
+        command = CommonCommand.STANDBY
+        if self.connected and self.summary_state in [
+            salobj.State.DISABLED,
+            salobj.State.ENABLED,
+        ]:
+            command_issued = await self.write_command(command=command)
+            await command_issued.done
+        else:
+            self.log.warning(
+                f"{self.connected=} and {self.summary_state=} so not "
+                f"sending the {command.value} command."
+            )
+        await self.stop_clients()
+
+    async def end_start(self, data: salobj.BaseMsgType) -> None:
+        """End do_start; called after state changes
+        but before command acknowledged.
+
+        Parameters
+        ----------
+        data : `DataType`
+            Command data
+        """
+        await self.start_clients()
+        command = CommonCommand.START
+        if self.connected:
+            command_issued = await self.write_command(command=command)
+            await command_issued.done
+        else:
+            self.log.warning(f"Not connected so not sending the {command} command.")
 
     async def start_clients(self) -> None:
         """Start the clients for the TCP/IPconnections as well as background
@@ -293,7 +358,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         for param in params:
             data[param] = params[param]
         # TODO DM-39629 Remove this when it is not necessary anymore.
-        if len(params) == 0:
+        if len(params) == 0 and command not in STATE_COMMANDS:
             data[CommonCommandArgument.VALUE] = True
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
