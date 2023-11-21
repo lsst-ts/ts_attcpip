@@ -189,6 +189,15 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 f"{self.connected=} and {self.summary_state=} so not "
                 f"sending the {command.value} command."
             )
+
+    async def begin_exitControl(self, data: salobj.BaseMsgType) -> None:
+        """Begin do_exitControl; called before state changes.
+
+        Parameters
+        ----------
+        data : `DataType`
+            Command data
+        """
         await self.stop_clients()
 
     async def end_start(self, data: salobj.BaseMsgType) -> None:

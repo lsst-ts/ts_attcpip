@@ -57,10 +57,12 @@ class CommonCommandArgument(enum.StrEnum):
 class CommonEvent(enum.StrEnum):
     """Enum containing all common event names."""
 
+    DETAILED_STATE = "evt_detailedState"
     SUMMARY_STATE = "evt_summaryState"
 
 
 class CommonEventArgument(enum.StrEnum):
     """Enum containing all common event argument names."""
 
+    DETAILED_STATE = "detailedState"
     SUMMARY_STATE = "summaryState"

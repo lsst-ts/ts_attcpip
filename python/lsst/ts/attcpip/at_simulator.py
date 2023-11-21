@@ -93,6 +93,9 @@ class AtSimulator:
             CommonCommand.START: self.disable,
         }
 
+        # Go to FAULT state when receiving the "start" command or not.
+        self.go_to_fault_state = False
+
         self.load_schemas()
 
     def load_schemas(self) -> None:
@@ -214,11 +217,14 @@ class AtSimulator:
 
     async def disable(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.DISABLED."""
-        self.simulator_state = sal_enums.State.DISABLED
         await self.write_success_response(sequence_id=sequence_id)
-        await self._write_evt(
-            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.DISABLED
-        )
+        if self.go_to_fault_state:
+            await self.fault()
+        else:
+            self.simulator_state = sal_enums.State.DISABLED
+            await self._write_evt(
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.DISABLED
+            )
 
     async def enable(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.ENABLED."""
@@ -234,6 +240,23 @@ class AtSimulator:
         await self.write_success_response(sequence_id=sequence_id)
         await self._write_evt(
             evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.STANDBY
+        )
+
+    async def send_detailed_state_events(self) -> None:
+        """Send detailed state events.
+
+        This method is called when going to FAULT state. Subclasses may
+        implement this such that the device specific behavior is mimicked.
+        """
+        # Left empty by default.
+        pass
+
+    async def fault(self) -> None:
+        """Switch to sal_enums.State.FAULT."""
+        await self.send_detailed_state_events()
+        self.simulator_state = sal_enums.State.FAULT
+        await self._write_evt(
+            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.FAULT
         )
 
     async def _write_command_response(self, response: str, sequence_id: int) -> None:
