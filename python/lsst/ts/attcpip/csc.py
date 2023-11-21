@@ -208,6 +208,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         If simulator_mode == 1 then the simulator gets initialized and started
         as well.
         """
+        self.log.debug("start_clients")
         if self.connected:
             self.log.warning("Already connected. Ignoring.")
             return
@@ -274,6 +275,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         while True:
             data = await self.cmd_evt_client.read_json()
+            self.log.debug(f"Received cmd_evt {data=}")
             data_id: str = data["id"]
 
             # If data_id starts with "evt_" then handle the event data.
@@ -307,6 +309,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         while True:
             data = await self.telemetry_client.read_json()
+            self.log.info(f"Received telemetry {data=}")
             data_id = ""
             try:
                 data_id = data["id"]
@@ -362,6 +365,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             data[CommonCommandArgument.VALUE] = True
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
+        self.log.debug(f"Writing {data=}")
         await self.cmd_evt_client.write_json(data)
         return command_issued
 
@@ -379,5 +383,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         name: str = data["id"]
         kwargs = {key: value for key, value in data.items() if key != "id"}
-        attr = getattr(self, f"{name}")
-        await attr.set_write(**kwargs)
+        attr = getattr(self, f"{name}", None)
+        if attr is not None:
+            self.log.debug(f"Sending {name=} with {kwargs=}")
+            await attr.set_write(**kwargs)
+        else:
+            self.log.error(f"{name=} not found. Ignoring.")
