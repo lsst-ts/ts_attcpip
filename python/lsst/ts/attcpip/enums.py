@@ -19,19 +19,25 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-__all__ = ["Ack", "CommonCommand", "CommonCommandArgument", "SimulatorState"]
+__all__ = [
+    "Ack",
+    "CommonCommand",
+    "CommonCommandArgument",
+    "CommonEvent",
+    "CommonEventArgument",
+]
 
 import enum
 
 
-class Ack(str, enum.Enum):
+class Ack(enum.StrEnum):
     ACK = "ack"
     FAIL = "fail"
     NOACK = "noack"
     SUCCESS = "success"
 
 
-class CommonCommand(str, enum.Enum):
+class CommonCommand(enum.StrEnum):
     """Enum containing all common command names."""
 
     DISABLE = "cmd_disable"
@@ -40,7 +46,7 @@ class CommonCommand(str, enum.Enum):
     START = "cmd_start"
 
 
-class CommonCommandArgument(str, enum.Enum):
+class CommonCommandArgument(enum.StrEnum):
     """Enum containing all common command arguments."""
 
     ID = "id"
@@ -48,9 +54,13 @@ class CommonCommandArgument(str, enum.Enum):
     VALUE = "value"
 
 
-class SimulatorState(enum.IntEnum):
-    """Enum containing all simulatr states."""
+class CommonEvent(enum.StrEnum):
+    """Enum containing all common event names."""
 
-    DISABLED = enum.auto()
-    ENABLED = enum.auto()
-    STANDBY = enum.auto()
+    SUMMARY_STATE = "evt_summaryState"
+
+
+class CommonEventArgument(enum.StrEnum):
+    """Enum containing all common event argument names."""
+
+    SUMMARY_STATE = "summaryState"

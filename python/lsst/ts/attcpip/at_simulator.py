@@ -32,9 +32,10 @@ import typing
 import jsonschema
 import numpy as np
 from lsst.ts import tcpip
+from lsst.ts.xml import sal_enums
 
 from .at_server_simulator import AtServerSimulator
-from .enums import Ack, CommonCommand, CommonCommandArgument, SimulatorState
+from .enums import Ack, CommonCommand, CommonCommandArgument, CommonEvent
 from .schemas import load_schemas, registry
 
 CMD_ITEMS_TO_IGNORE = frozenset({CommonCommandArgument.ID, CommonCommandArgument.VALUE})
@@ -82,7 +83,7 @@ class AtSimulator:
         # - enable: DISABLED -> ENABLED
         # - disable: ENABLED -> DISABLED
         # - standby: DISABLED -> STANDBY
-        self.simulator_state = SimulatorState.STANDBY
+        self.simulator_state = sal_enums.State.STANDBY
 
         # Dict of command: function.
         self.dispatch_dict: dict[str, typing.Callable] = {
@@ -212,19 +213,28 @@ class AtSimulator:
         return True
 
     async def disable(self, *, sequence_id: int) -> None:
-        """Switch to SimulatorState.DISABLED."""
-        self.simulator_state = SimulatorState.DISABLED
+        """Switch to sal_enums.State.DISABLED."""
+        self.simulator_state = sal_enums.State.DISABLED
         await self.write_success_response(sequence_id=sequence_id)
+        await self._write_evt(
+            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.DISABLED
+        )
 
     async def enable(self, *, sequence_id: int) -> None:
-        """Switch to SimulatorState.ENABLED."""
-        self.simulator_state = SimulatorState.ENABLED
+        """Switch to sal_enums.State.ENABLED."""
+        self.simulator_state = sal_enums.State.ENABLED
         await self.write_success_response(sequence_id=sequence_id)
+        await self._write_evt(
+            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.ENABLED
+        )
 
     async def standby(self, *, sequence_id: int) -> None:
-        """Switch to SimulatorState.STANDBY."""
-        self.simulator_state = SimulatorState.STANDBY
+        """Switch to sal_enums.State.STANDBY."""
+        self.simulator_state = sal_enums.State.STANDBY
         await self.write_success_response(sequence_id=sequence_id)
+        await self._write_evt(
+            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.STANDBY
+        )
 
     async def _write_command_response(self, response: str, sequence_id: int) -> None:
         """Generic method to write a command response.

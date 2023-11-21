@@ -27,10 +27,17 @@ import types
 import typing
 
 from lsst.ts import salobj, tcpip, utils
+from lsst.ts.xml import sal_enums
 
 from .at_server_simulator import AtServerSimulator
 from .command_issued import CommandIssued
-from .enums import Ack, CommonCommand, CommonCommandArgument
+from .enums import (
+    Ack,
+    CommonCommand,
+    CommonCommandArgument,
+    CommonEvent,
+    CommonEventArgument,
+)
 
 # List of all state commands.
 STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
@@ -280,6 +287,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
             # If data_id starts with "evt_" then handle the event data.
             if data_id.startswith("evt_"):
+                # If data_id is a summary state event, then handle that.
+                try:
+                    summary_state = CommonEvent(data_id)
+                    state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
+                    self.log.debug(f"{summary_state=}, {state=}")
+                    continue
+                except ValueError:
+                    pass
                 await self.call_set_write(data=data)
             elif CommonCommandArgument.SEQUENCE_ID in data:
                 sequence_id = data[CommonCommandArgument.SEQUENCE_ID]

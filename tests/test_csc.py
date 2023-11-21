@@ -26,8 +26,10 @@ import typing
 import unittest
 from unittest import mock
 
+import pytest
 import yaml
 from lsst.ts import attcpip, salobj, tcpip
+from lsst.ts.xml import sal_enums
 
 CONFIG_DIR = pathlib.Path(__file__).parent / "data" / "config"
 CONFIG_SCHEMA = yaml.safe_load(
@@ -70,6 +72,12 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             await self.simulator.telemetry_server.start_task
             yield
 
+    async def assert_no_summary_state_event(self, remote: salobj.Remote) -> None:
+        # No summaryState event should be emitted since this is not a real CSC
+        # and the events sent by the simulator should not be propagated.
+        with pytest.raises(TimeoutError):
+            await remote.evt_summaryState.next(flush=False, timeout=0.2)
+
     async def test_csc(self) -> None:
         os.environ["LSST_TOPIC_SUBNAME"] = "test_attcpip"
         os.environ["LSST_SITE"] = "test"
@@ -83,29 +91,36 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         ), mock.patch.object(
             salobj.topics.WriteTopic, "write"
         ):
-            async with self.create_at_simulator():  # type: ignore
-                csc = attcpip.AtTcpipCsc(
-                    name="Test",
-                    index=0,
-                    config_schema=CONFIG_SCHEMA,
-                    config_dir=CONFIG_DIR,
-                    initial_state=salobj.State.STANDBY,
-                    simulation_mode=1,
-                )
-                assert csc is not None
+            async with self.create_at_simulator(), attcpip.AtTcpipCsc(  # type: ignore
+                name="Test",
+                index=0,
+                config_schema=CONFIG_SCHEMA,
+                config_dir=CONFIG_DIR,
+                initial_state=salobj.State.STANDBY,
+                simulation_mode=1,
+            ) as csc, salobj.Remote(
+                domain=csc.domain,
+                name=csc.salinfo.name,
+                index=csc.salinfo.index,
+            ) as remote:
                 csc.simulator = self.simulator
                 data = salobj.BaseMsgType()
                 data.configurationOverride = ""
-                assert self.simulator.simulator_state == attcpip.SimulatorState.STANDBY
+                assert self.simulator.simulator_state == sal_enums.State.STANDBY
+                await self.assert_no_summary_state_event(remote=remote)
 
                 await csc.do_start(data)
-                assert self.simulator.simulator_state == attcpip.SimulatorState.DISABLED
+                assert self.simulator.simulator_state == sal_enums.State.DISABLED
+                await self.assert_no_summary_state_event(remote=remote)
 
                 await csc.do_enable(data)
-                assert self.simulator.simulator_state == attcpip.SimulatorState.ENABLED
+                assert self.simulator.simulator_state == sal_enums.State.ENABLED
+                await self.assert_no_summary_state_event(remote=remote)
 
                 await csc.do_disable(data)
-                assert self.simulator.simulator_state == attcpip.SimulatorState.DISABLED
+                assert self.simulator.simulator_state == sal_enums.State.DISABLED
+                await self.assert_no_summary_state_event(remote=remote)
 
                 await csc.do_standby(data)
-                assert self.simulator.simulator_state == attcpip.SimulatorState.STANDBY
+                assert self.simulator.simulator_state == sal_enums.State.STANDBY
+                await self.assert_no_summary_state_event(remote=remote)

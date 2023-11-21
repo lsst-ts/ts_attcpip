@@ -27,6 +27,7 @@ import unittest
 from unittest import mock
 
 from lsst.ts import attcpip, tcpip
+from lsst.ts.xml import sal_enums
 
 # Standard timeout in seconds.
 TIMEOUT = 2
@@ -73,8 +74,17 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         assert data[attcpip.CommonCommandArgument.ID] == ack
         assert data[attcpip.CommonCommandArgument.SEQUENCE_ID] == sequence_id
 
+    async def verify_event(self, state: sal_enums.State) -> None:
+        data = await self.cmd_evt_client.read_json()
+        assert attcpip.CommonCommandArgument.ID in data
+        assert (
+            data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.SUMMARY_STATE
+        )
+        assert attcpip.CommonEventArgument.SUMMARY_STATE in data
+        assert data[attcpip.CommonEventArgument.SUMMARY_STATE] == state
+
     async def execute_command(
-        self, command: attcpip.CommonCommand, expected_state: attcpip.SimulatorState
+        self, command: attcpip.CommonCommand, expected_state: sal_enums.State
     ) -> None:
         self.sequence_id += 1
         await self.cmd_evt_client.write_json(
@@ -89,19 +99,20 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         await self.verify_command_response(
             ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id
         )
+        await self.verify_event(state=expected_state)
         assert self.simulator.simulator_state == expected_state
 
     async def test_stimulator_state_commands(self) -> None:
         async with self.create_at_simulator(), self.create_cmd_evt_client(  # type: ignore
             self.simulator
         ):
-            assert self.simulator.simulator_state == attcpip.SimulatorState.STANDBY
+            assert self.simulator.simulator_state == sal_enums.State.STANDBY
 
             commands_and_expected_states = {
-                attcpip.CommonCommand.START: attcpip.SimulatorState.DISABLED,
-                attcpip.CommonCommand.ENABLE: attcpip.SimulatorState.ENABLED,
-                attcpip.CommonCommand.DISABLE: attcpip.SimulatorState.DISABLED,
-                attcpip.CommonCommand.STANDBY: attcpip.SimulatorState.STANDBY,
+                attcpip.CommonCommand.START: sal_enums.State.DISABLED,
+                attcpip.CommonCommand.ENABLE: sal_enums.State.ENABLED,
+                attcpip.CommonCommand.DISABLE: sal_enums.State.DISABLED,
+                attcpip.CommonCommand.STANDBY: sal_enums.State.STANDBY,
             }
 
             for command in commands_and_expected_states:
