@@ -184,21 +184,16 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         ]:
             command_issued = await self.write_command(command=command)
             await command_issued.done
+            self.log.debug("Stopping telemetry task.")
+            await self._stop_telemetry_task_and_client()
+        elif self.connected and self.summary_state in [salobj.State.FAULT]:
+            command_issued = await self.write_command(command=command)
+            await command_issued.done
         else:
             self.log.warning(
                 f"{self.connected=} and {self.summary_state=} so not "
                 f"sending the {command.value} command."
             )
-
-    async def begin_exitControl(self, data: salobj.BaseMsgType) -> None:
-        """Begin do_exitControl; called before state changes.
-
-        Parameters
-        ----------
-        data : `DataType`
-            Command data
-        """
-        await self.stop_clients()
 
     async def end_start(self, data: salobj.BaseMsgType) -> None:
         """End do_start; called after state changes
@@ -225,9 +220,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         as well.
         """
         self.log.debug("start_clients")
-        if self.connected:
-            self.log.warning("Already connected. Ignoring.")
-            return
 
         assert self.config is not None
         host = self.config.host
@@ -242,35 +234,53 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             cmd_evt_port = self.simulator.cmd_evt_server.port
             telemetry_port = self.simulator.telemetry_server.port
 
-        self.cmd_evt_client = tcpip.Client(
-            host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
-        )
-        self.telemetry_client = tcpip.Client(
-            host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
-        )
+        # Stop the clients in case the configuration has changed.
+        if self.cmd_evt_client.connected and (
+            self.cmd_evt_client.host != host or self.cmd_evt_client.port != cmd_evt_port
+        ):
+            await self._stop_cmd_evt_task_and_client()
+        if self.telemetry_client.connected and (
+            self.telemetry_client.host != host
+            or self.telemetry_client.port != telemetry_port
+        ):
+            await self._stop_telemetry_task_and_client()
 
-        await self.cmd_evt_client.start_task
-        await self.telemetry_client.start_task
+        if not self.cmd_evt_client.connected:
+            self.log.debug("Starting cmd_evt client.")
+            self.cmd_evt_client = tcpip.Client(
+                host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
+            )
+            await self.cmd_evt_client.start_task
+            self._event_task = asyncio.create_task(self.cmd_evt_loop())
 
-        self._event_task = asyncio.create_task(self.cmd_evt_loop())
-        self._telemetry_task = asyncio.create_task(self.telemetry_loop())
+        if not self.telemetry_client.connected:
+            self.log.debug("Starting telemetry client.")
+            self.telemetry_client = tcpip.Client(
+                host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
+            )
+            await self.telemetry_client.start_task
+            self._telemetry_task = asyncio.create_task(self.telemetry_loop())
+
+    async def _stop_cmd_evt_task_and_client(self) -> None:
+        if not self._event_task.done():
+            self._event_task.cancel()
+        await self.cmd_evt_client.close()
+
+    async def _stop_telemetry_task_and_client(self) -> None:
+        if not self._telemetry_task.done():
+            self._telemetry_task.cancel()
+        await self.telemetry_client.close()
 
     async def stop_clients(self) -> None:
         """Stop all clients and background tasks.
 
         If simulator_mode == 1 then the simulator gets stopped as well.
         """
-        if not self.connected:
-            self.log.warning("Not connected. Ignoring.")
-            return
+        await self._stop_telemetry_task_and_client()
+        await self._stop_cmd_evt_task_and_client()
 
-        self._event_task.cancel()
-        self._telemetry_task.cancel()
-
-        await self.cmd_evt_client.close()
-        await self.telemetry_client.close()
-
-        if (self.simulation_mode == 1) and (self.simulator is not None):
+        if self.simulator is not None:
+            self.log.debug("Closing simulator servers.")
             await self.simulator.telemetry_server.close()
             await self.simulator.cmd_evt_server.close()
 
@@ -292,16 +302,17 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         while True:
             data = await self.cmd_evt_client.read_json()
             self.log.debug(f"Received cmd_evt {data=}")
-            data_id: str = data["id"]
+            data_id: str = data[CommonCommandArgument.ID]
 
             # If data_id starts with "evt_" then handle the event data.
             if data_id.startswith("evt_"):
-                # If data_id is a summary state event, then handle that.
+                # Handle summary state and detailed state events.
                 try:
-                    summary_state = CommonEvent(data_id)
-                    state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
-                    self.log.debug(f"{summary_state=}, {state=}")
-                    continue
+                    state_evt = CommonEvent(data_id)
+                    state = data[CommonEventArgument.SUMMARY_STATE]
+                    self.log.debug(f"{state_evt=}, {state=}")
+                    if state == sal_enums.State.FAULT:
+                        await self.fault(code=None, report="Server in FAULT state.")
                 except ValueError:
                     pass
                 await self.call_set_write(data=data)
@@ -336,7 +347,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.info(f"Received telemetry {data=}")
             data_id = ""
             try:
-                data_id = data["id"]
+                data_id = data[CommonCommandArgument.ID]
             except Exception:
                 self.log.warning(f"Unable to parse {data=}. Ignoring.")
             if data_id.startswith("tel_"):

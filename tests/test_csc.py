@@ -113,44 +113,35 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             data.configurationOverride = ""
             assert self.simulator.simulator_state == sal_enums.State.STANDBY
             await self.assert_no_summary_state_event(remote=remote)
+            assert not csc.cmd_evt_client.connected
+            assert not csc.telemetry_client.connected
 
-            await csc.do_start(data)
-            assert self.simulator.simulator_state == sal_enums.State.DISABLED
-            await self.assert_no_summary_state_event(remote=remote)
+            # Repeat to make sure that the cmd_evt_client still is connected to
+            # the server after going to STANDBY.
+            for _ in range(2):
+                await csc.do_start(data)
+                assert self.simulator.simulator_state == sal_enums.State.DISABLED
+                await self.assert_no_summary_state_event(remote=remote)
+                assert csc.cmd_evt_client.connected
+                assert csc.telemetry_client.connected
 
-            await csc.do_enable(data)
-            assert self.simulator.simulator_state == sal_enums.State.ENABLED
-            await self.assert_no_summary_state_event(remote=remote)
+                await csc.do_enable(data)
+                assert self.simulator.simulator_state == sal_enums.State.ENABLED
+                await self.assert_no_summary_state_event(remote=remote)
+                assert csc.cmd_evt_client.connected
+                assert csc.telemetry_client.connected
 
-            await csc.do_disable(data)
-            assert self.simulator.simulator_state == sal_enums.State.DISABLED
-            await self.assert_no_summary_state_event(remote=remote)
+                await csc.do_disable(data)
+                assert self.simulator.simulator_state == sal_enums.State.DISABLED
+                await self.assert_no_summary_state_event(remote=remote)
+                assert csc.cmd_evt_client.connected
+                assert csc.telemetry_client.connected
 
-            await csc.do_standby(data)
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await self.assert_no_summary_state_event(remote=remote)
-
-            # Repeat to make sure that the CSC still is connected to the
-            # simulator.
-            await csc.do_start(data)
-            assert self.simulator.simulator_state == sal_enums.State.DISABLED
-            await self.assert_no_summary_state_event(remote=remote)
-
-            await csc.do_enable(data)
-            assert self.simulator.simulator_state == sal_enums.State.ENABLED
-            await self.assert_no_summary_state_event(remote=remote)
-
-            await csc.do_disable(data)
-            assert self.simulator.simulator_state == sal_enums.State.DISABLED
-            await self.assert_no_summary_state_event(remote=remote)
-
-            await csc.do_standby(data)
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await self.assert_no_summary_state_event(remote=remote)
-
-            await csc.do_exitControl(data)
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await self.assert_no_summary_state_event(remote=remote)
+                await csc.do_standby(data)
+                assert self.simulator.simulator_state == sal_enums.State.STANDBY
+                await self.assert_no_summary_state_event(remote=remote)
+                assert csc.cmd_evt_client.connected
+                assert not csc.telemetry_client.connected
 
     async def test_csc_with_fault_state(self) -> None:
         # Test with the simulator going to FAULT state.
@@ -172,24 +163,17 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             assert self.simulator.simulator_state == sal_enums.State.STANDBY
             await self.assert_no_summary_state_event(remote=remote)
 
-            await csc.do_start(data)
-            assert self.simulator.simulator_state == sal_enums.State.FAULT
-            await self.assert_no_summary_state_event(remote=remote)
+            # Repeat to make sure that the both cmd_evt_client and
+            # telemetry_client still are connected to the serverall the time.
+            for _ in range(2):
+                await csc.do_start(data)
+                assert self.simulator.simulator_state == sal_enums.State.FAULT
+                await self.assert_no_summary_state_event(remote=remote)
+                assert csc.cmd_evt_client.connected
+                assert csc.telemetry_client.connected
 
-            await csc.do_standby(data)
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await self.assert_no_summary_state_event(remote=remote)
-
-            # Repeat to make sure that the CSC still is connected to the
-            # simulator.
-            await csc.do_start(data)
-            assert self.simulator.simulator_state == sal_enums.State.FAULT
-            await self.assert_no_summary_state_event(remote=remote)
-
-            await csc.do_standby(data)
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await self.assert_no_summary_state_event(remote=remote)
-
-            await csc.do_exitControl(data)
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await self.assert_no_summary_state_event(remote=remote)
+                await csc.do_standby(data)
+                assert self.simulator.simulator_state == sal_enums.State.STANDBY
+                await self.assert_no_summary_state_event(remote=remote)
+                assert csc.cmd_evt_client.connected
+                assert csc.telemetry_client.connected
