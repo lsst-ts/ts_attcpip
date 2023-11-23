@@ -186,7 +186,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             await command_issued.done
             self.log.debug("Stopping telemetry task.")
             await self._stop_telemetry_task_and_client()
-        elif self.connected and self.summary_state in [salobj.State.FAULT]:
+        elif self.connected and self.summary_state == salobj.State.FAULT:
             command_issued = await self.write_command(command=command)
             await command_issued.done
         else:
@@ -309,10 +309,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 # Handle summary state and detailed state events.
                 try:
                     state_evt = CommonEvent(data_id)
-                    state = data[CommonEventArgument.SUMMARY_STATE]
-                    self.log.debug(f"{state_evt=}, {state=}")
-                    if state == sal_enums.State.FAULT:
-                        await self.fault(code=None, report="Server in FAULT state.")
+                    if state_evt == CommonEvent.SUMMARY_STATE:
+                        state = data[CommonEventArgument.SUMMARY_STATE]
+                        if state == sal_enums.State.FAULT:
+                            await self.fault(code=None, report="Server in FAULT state.")
                 except ValueError:
                     pass
                 await self.call_set_write(data=data)
@@ -344,7 +344,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         while True:
             data = await self.telemetry_client.read_json()
-            self.log.info(f"Received telemetry {data=}")
             data_id = ""
             try:
                 data_id = data[CommonCommandArgument.ID]
@@ -420,7 +419,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         kwargs = {key: value for key, value in data.items() if key != "id"}
         attr = getattr(self, f"{name}", None)
         if attr is not None:
-            self.log.debug(f"Sending {name=} with {kwargs=}")
+            if name.startswith("evt_"):
+                self.log.debug(f"Sending {name=} with {kwargs=}")
             await attr.set_write(**kwargs)
+            if name.startswith("evt_"):
+                self.log.debug(f"Done sending {name=} with {kwargs=}")
         else:
             self.log.error(f"{name=} not found. Ignoring.")
