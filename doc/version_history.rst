@@ -6,6 +6,20 @@
 Version History
 ###############
 
+v0.1.3
+======
+
+* Add sending a summaryState event for the STANDBY, DISABLED, ENABLED and FAULT states.
+* Stop the telemetry client and task when going to STANDBY state.
+* Make sure that events emitted by the server get emitted by the CSC.
+* Support simulation mode 0.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.2
 ======
 
