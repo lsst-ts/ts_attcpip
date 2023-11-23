@@ -81,7 +81,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         a subset of commands.
     """
 
-    valid_simulation_modes = [1]
+    valid_simulation_modes = [0, 1]
 
     def __init__(
         self,
@@ -90,7 +90,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         config_schema: dict[str, typing.Any],
         config_dir: str | pathlib.Path | None = None,
         check_if_duplicate: bool = False,
-        initial_state: salobj.State | int | None = None,
+        initial_state: salobj.State = salobj.State.STANDBY,
         override: str = "",
         simulation_mode: int = 0,
     ) -> None:
