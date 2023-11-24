@@ -27,6 +27,7 @@ import unittest
 from unittest import mock
 
 from lsst.ts import attcpip, tcpip
+from lsst.ts.xml import sal_enums
 
 # Standard timeout in seconds.
 TIMEOUT = 2
@@ -38,16 +39,17 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         self.sequence_id = 0
 
     @contextlib.asynccontextmanager
-    @mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback")
     async def create_at_simulator(
-        self, mock_sim: mock.AsyncMock
+        self, go_to_fault_state: bool
     ) -> typing.AsyncGenerator[None, None]:
-        async with attcpip.AtSimulator(
-            host=tcpip.LOCALHOST_IPV4, cmd_evt_port=5000, telemetry_port=6000
-        ) as self.simulator:
-            await self.simulator.cmd_evt_server.start_task
-            await self.simulator.telemetry_server.start_task
-            yield
+        with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
+            async with attcpip.AtSimulator(
+                host=tcpip.LOCALHOST_IPV4, cmd_evt_port=5000, telemetry_port=6000
+            ) as self.simulator:
+                self.simulator.go_to_fault_state = go_to_fault_state
+                await self.simulator.cmd_evt_server.start_task
+                await self.simulator.telemetry_server.start_task
+                yield
 
     @contextlib.asynccontextmanager
     async def create_cmd_evt_client(
@@ -73,8 +75,17 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         assert data[attcpip.CommonCommandArgument.ID] == ack
         assert data[attcpip.CommonCommandArgument.SEQUENCE_ID] == sequence_id
 
+    async def verify_event(self, state: sal_enums.State) -> None:
+        data = await self.cmd_evt_client.read_json()
+        assert attcpip.CommonCommandArgument.ID in data
+        assert (
+            data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.SUMMARY_STATE
+        )
+        assert attcpip.CommonEventArgument.SUMMARY_STATE in data
+        assert data[attcpip.CommonEventArgument.SUMMARY_STATE] == state
+
     async def execute_command(
-        self, command: attcpip.CommonCommand, expected_state: attcpip.SimulatorState
+        self, command: attcpip.CommonCommand, expected_state: sal_enums.State
     ) -> None:
         self.sequence_id += 1
         await self.cmd_evt_client.write_json(
@@ -89,22 +100,37 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         await self.verify_command_response(
             ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id
         )
+        await self.verify_event(state=expected_state)
         assert self.simulator.simulator_state == expected_state
 
     async def test_stimulator_state_commands(self) -> None:
-        async with self.create_at_simulator(), self.create_cmd_evt_client(  # type: ignore
-            self.simulator
-        ):
-            assert self.simulator.simulator_state == attcpip.SimulatorState.STANDBY
+        async with self.create_at_simulator(
+            go_to_fault_state=False
+        ), self.create_cmd_evt_client(self.simulator):
+            assert self.simulator.simulator_state == sal_enums.State.STANDBY
 
             commands_and_expected_states = {
-                attcpip.CommonCommand.START: attcpip.SimulatorState.DISABLED,
-                attcpip.CommonCommand.ENABLE: attcpip.SimulatorState.ENABLED,
-                attcpip.CommonCommand.DISABLE: attcpip.SimulatorState.DISABLED,
-                attcpip.CommonCommand.STANDBY: attcpip.SimulatorState.STANDBY,
+                attcpip.CommonCommand.START: sal_enums.State.DISABLED,
+                attcpip.CommonCommand.ENABLE: sal_enums.State.ENABLED,
+                attcpip.CommonCommand.DISABLE: sal_enums.State.DISABLED,
+                attcpip.CommonCommand.STANDBY: sal_enums.State.STANDBY,
             }
 
             for command in commands_and_expected_states:
                 await self.execute_command(
                     command, commands_and_expected_states[command]
                 )
+
+    async def test_fault_state(self) -> None:
+        async with self.create_at_simulator(
+            go_to_fault_state=True
+        ), self.create_cmd_evt_client(self.simulator):
+            assert self.simulator.simulator_state == sal_enums.State.STANDBY
+
+            command = attcpip.CommonCommand.START
+            expected_state = sal_enums.State.FAULT
+            await self.execute_command(command, expected_state)
+
+            command = attcpip.CommonCommand.STANDBY
+            expected_state = sal_enums.State.STANDBY
+            await self.execute_command(command, expected_state)
