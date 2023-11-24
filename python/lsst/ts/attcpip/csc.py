@@ -27,10 +27,17 @@ import types
 import typing
 
 from lsst.ts import salobj, tcpip, utils
+from lsst.ts.xml import sal_enums
 
 from .at_server_simulator import AtServerSimulator
 from .command_issued import CommandIssued
-from .enums import Ack, CommonCommand, CommonCommandArgument
+from .enums import (
+    Ack,
+    CommonCommand,
+    CommonCommandArgument,
+    CommonEvent,
+    CommonEventArgument,
+)
 
 # List of all state commands.
 STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
@@ -74,7 +81,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         a subset of commands.
     """
 
-    valid_simulation_modes = [1]
+    valid_simulation_modes = [0, 1]
 
     def __init__(
         self,
@@ -83,7 +90,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         config_schema: dict[str, typing.Any],
         config_dir: str | pathlib.Path | None = None,
         check_if_duplicate: bool = False,
-        initial_state: salobj.State | int | None = None,
+        initial_state: salobj.State = salobj.State.STANDBY,
         override: str = "",
         simulation_mode: int = 0,
     ) -> None:
@@ -177,12 +184,16 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         ]:
             command_issued = await self.write_command(command=command)
             await command_issued.done
+            self.log.debug("Stopping telemetry task.")
+            await self._stop_telemetry_task_and_client()
+        elif self.connected and self.summary_state == salobj.State.FAULT:
+            command_issued = await self.write_command(command=command)
+            await command_issued.done
         else:
             self.log.warning(
                 f"{self.connected=} and {self.summary_state=} so not "
                 f"sending the {command.value} command."
             )
-        await self.stop_clients()
 
     async def end_start(self, data: salobj.BaseMsgType) -> None:
         """End do_start; called after state changes
@@ -208,9 +219,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         If simulator_mode == 1 then the simulator gets initialized and started
         as well.
         """
-        if self.connected:
-            self.log.warning("Already connected. Ignoring.")
-            return
+        self.log.debug("start_clients")
 
         assert self.config is not None
         host = self.config.host
@@ -225,35 +234,53 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             cmd_evt_port = self.simulator.cmd_evt_server.port
             telemetry_port = self.simulator.telemetry_server.port
 
-        self.cmd_evt_client = tcpip.Client(
-            host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
-        )
-        self.telemetry_client = tcpip.Client(
-            host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
-        )
+        # Stop the clients in case the configuration has changed.
+        if self.cmd_evt_client.connected and (
+            self.cmd_evt_client.host != host or self.cmd_evt_client.port != cmd_evt_port
+        ):
+            await self._stop_cmd_evt_task_and_client()
+        if self.telemetry_client.connected and (
+            self.telemetry_client.host != host
+            or self.telemetry_client.port != telemetry_port
+        ):
+            await self._stop_telemetry_task_and_client()
 
-        await self.cmd_evt_client.start_task
-        await self.telemetry_client.start_task
+        if not self.cmd_evt_client.connected:
+            self.log.debug("Starting cmd_evt client.")
+            self.cmd_evt_client = tcpip.Client(
+                host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
+            )
+            await self.cmd_evt_client.start_task
+            self._event_task = asyncio.create_task(self.cmd_evt_loop())
 
-        self._event_task = asyncio.create_task(self.cmd_evt_loop())
-        self._telemetry_task = asyncio.create_task(self.telemetry_loop())
+        if not self.telemetry_client.connected:
+            self.log.debug("Starting telemetry client.")
+            self.telemetry_client = tcpip.Client(
+                host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
+            )
+            await self.telemetry_client.start_task
+            self._telemetry_task = asyncio.create_task(self.telemetry_loop())
+
+    async def _stop_cmd_evt_task_and_client(self) -> None:
+        if not self._event_task.done():
+            self._event_task.cancel()
+        await self.cmd_evt_client.close()
+
+    async def _stop_telemetry_task_and_client(self) -> None:
+        if not self._telemetry_task.done():
+            self._telemetry_task.cancel()
+        await self.telemetry_client.close()
 
     async def stop_clients(self) -> None:
         """Stop all clients and background tasks.
 
         If simulator_mode == 1 then the simulator gets stopped as well.
         """
-        if not self.connected:
-            self.log.warning("Not connected. Ignoring.")
-            return
+        await self._stop_telemetry_task_and_client()
+        await self._stop_cmd_evt_task_and_client()
 
-        self._event_task.cancel()
-        self._telemetry_task.cancel()
-
-        await self.cmd_evt_client.close()
-        await self.telemetry_client.close()
-
-        if (self.simulation_mode == 1) and (self.simulator is not None):
+        if self.simulator is not None:
+            self.log.debug("Closing simulator servers.")
             await self.simulator.telemetry_server.close()
             await self.simulator.cmd_evt_server.close()
 
@@ -274,10 +301,20 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         while True:
             data = await self.cmd_evt_client.read_json()
-            data_id: str = data["id"]
+            self.log.debug(f"Received cmd_evt {data=}")
+            data_id: str = data[CommonCommandArgument.ID]
 
             # If data_id starts with "evt_" then handle the event data.
             if data_id.startswith("evt_"):
+                # Handle summary state and detailed state events.
+                try:
+                    state_evt = CommonEvent(data_id)
+                    if state_evt == CommonEvent.SUMMARY_STATE:
+                        state = data[CommonEventArgument.SUMMARY_STATE]
+                        if state == sal_enums.State.FAULT:
+                            await self.fault(code=None, report="Server in FAULT state.")
+                except ValueError:
+                    pass
                 await self.call_set_write(data=data)
             elif CommonCommandArgument.SEQUENCE_ID in data:
                 sequence_id = data[CommonCommandArgument.SEQUENCE_ID]
@@ -309,7 +346,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             data = await self.telemetry_client.read_json()
             data_id = ""
             try:
-                data_id = data["id"]
+                data_id = data[CommonCommandArgument.ID]
             except Exception:
                 self.log.warning(f"Unable to parse {data=}. Ignoring.")
             if data_id.startswith("tel_"):
@@ -362,6 +399,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             data[CommonCommandArgument.VALUE] = True
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
+        self.log.debug(f"Writing {data=}")
         await self.cmd_evt_client.write_json(data)
         return command_issued
 
@@ -379,5 +417,12 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         name: str = data["id"]
         kwargs = {key: value for key, value in data.items() if key != "id"}
-        attr = getattr(self, f"{name}")
-        await attr.set_write(**kwargs)
+        attr = getattr(self, f"{name}", None)
+        if attr is not None:
+            if name.startswith("evt_"):
+                self.log.debug(f"Sending {name=} with {kwargs=}")
+            await attr.set_write(**kwargs)
+            if name.startswith("evt_"):
+                self.log.debug(f"Done sending {name=} with {kwargs=}")
+        else:
+            self.log.error(f"{name=} not found. Ignoring.")
