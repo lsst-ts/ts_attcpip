@@ -23,7 +23,7 @@ __all__ = ["CommandIssued"]
 
 import asyncio
 
-from lsst.ts import salobj, utils
+from lsst.ts import utils
 
 
 class CommandIssued:
@@ -70,7 +70,7 @@ class CommandIssued:
         self.ack_timestamp = utils.current_tai()
         if not self.done.done():
             self.done.set_exception(
-                salobj.ExpectedError(f"Command {self.name} was not acknowledged.")
+                RuntimeError(f"Command {self.name} was not acknowledged.")
             )
 
     def set_success(self) -> None:
@@ -83,6 +83,4 @@ class CommandIssued:
         """Report a command as failed during execution."""
         self.done_timestamp = utils.current_tai()
         if not self.done.done():
-            self.done.set_exception(
-                salobj.ExpectedError(f"Command {self.name} failed.")
-            )
+            self.done.set_exception(RuntimeError(f"Command {self.name} failed."))

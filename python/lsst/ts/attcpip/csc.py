@@ -312,6 +312,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     if state_evt == CommonEvent.SUMMARY_STATE:
                         state = data[CommonEventArgument.SUMMARY_STATE]
                         if state == sal_enums.State.FAULT:
+                            self.log.debug(
+                                f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
+                            )
                             await self.fault(code=None, report="Server in FAULT state.")
                 except ValueError:
                     pass
