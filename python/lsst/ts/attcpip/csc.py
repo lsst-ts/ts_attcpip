@@ -421,11 +421,16 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         name: str = data["id"]
         kwargs = {key: value for key, value in data.items() if key != "id"}
         attr = getattr(self, f"{name}", None)
+        send_failure = False
         if attr is not None:
             if name.startswith("evt_"):
                 self.log.debug(f"Sending {name=} with {kwargs=}")
-            await attr.set_write(**kwargs)
-            if name.startswith("evt_"):
+            try:
+                await attr.set_write(**kwargs)
+            except Exception:
+                send_failure = True
+                self.log.exception(f"Failed to send {name=} with {kwargs=}")
+            if name.startswith("evt_") and not send_failure:
                 self.log.debug(f"Done sending {name=} with {kwargs=}")
         else:
             self.log.error(f"{name=} not found. Ignoring.")
