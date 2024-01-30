@@ -6,6 +6,17 @@
 Version History
 ###############
 
+v0.1.5
+======
+
+* Improve handling of data messages with incorrect parameters.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.4
 ======
 
