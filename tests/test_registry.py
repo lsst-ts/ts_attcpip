@@ -29,6 +29,8 @@ class RegistryTestCase(unittest.IsolatedAsyncioTestCase):
         # Make sure that the expected commands are in the registry.
         for cmd in ["disable", "enable", "standby", "start"]:
             attcpip.registry.pop(f"command_{cmd}")
+        for evt in ["errorCode"]:
+            attcpip.registry.pop(f"logevent_{evt}")
 
         # Make sure that no other commands are in the registry.
         assert len(attcpip.registry) == 0

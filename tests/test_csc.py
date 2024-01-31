@@ -165,6 +165,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 await csc.do_start(data)
                 assert self.simulator.simulator_state == sal_enums.State.FAULT
                 await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
+                await remote.evt_errorCode.next(flush=False, timeout=TIMEOUT)
                 assert csc.cmd_evt_client.connected
                 assert csc.telemetry_client.connected
 
