@@ -1,0 +1,28 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "id": {
+            "const": "evt_errorCode"
+        },
+        "errorCode": {
+            "type": "number",
+            "description": "A numeric error code."
+        },
+        "errorReport": {
+            "type": "string",
+            "description": "A string providing detailed information about the error."
+        },
+        "traceback": {
+            "type": "string",
+            "description": "An optional stack trace of the error condition."
+        }
+    },
+    "required": [
+        "id",
+        "errorCode",
+        "errorReport",
+        "traceback"
+    ],
+    "additionalProperties": false
+}
