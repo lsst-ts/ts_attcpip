@@ -84,6 +84,16 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         assert attcpip.CommonEventArgument.SUMMARY_STATE in data
         assert data[attcpip.CommonEventArgument.SUMMARY_STATE] == state
 
+        if state == sal_enums.State.FAULT:
+            data = await self.cmd_evt_client.read_json()
+            assert attcpip.CommonCommandArgument.ID in data
+            assert (
+                data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.ERROR_CODE
+            )
+            assert attcpip.CommonEventArgument.ERROR_CODE in data
+            assert attcpip.CommonEventArgument.ERROR_REPORT in data
+            assert attcpip.CommonEventArgument.TRACEBACK in data
+
     async def execute_command(
         self, command: attcpip.CommonCommand, expected_state: sal_enums.State
     ) -> None:

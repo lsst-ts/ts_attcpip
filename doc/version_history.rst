@@ -6,6 +6,17 @@
 Version History
 ###############
 
+v0.1.6
+======
+
+* Add support for the errorCode event.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.5
 ======
 

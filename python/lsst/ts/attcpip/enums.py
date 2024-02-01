@@ -58,6 +58,7 @@ class CommonEvent(enum.StrEnum):
     """Enum containing all common event names."""
 
     DETAILED_STATE = "evt_detailedState"
+    ERROR_CODE = "evt_errorCode"
     SUMMARY_STATE = "evt_summaryState"
 
 
@@ -65,4 +66,7 @@ class CommonEventArgument(enum.StrEnum):
     """Enum containing all common event argument names."""
 
     DETAILED_STATE = "detailedState"
+    ERROR_CODE = "errorCode"
+    ERROR_REPORT = "errorReport"
     SUMMARY_STATE = "summaryState"
+    TRACEBACK = "traceback"

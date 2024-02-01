@@ -258,6 +258,12 @@ class AtSimulator:
         await self._write_evt(
             evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.FAULT
         )
+        await self._write_evt(
+            evt_id=CommonEvent.ERROR_CODE,
+            errorCode=-1,
+            errorReport="Intentional error for unit tests.",
+            traceback="",
+        )
 
     async def _write_command_response(self, response: str, sequence_id: int) -> None:
         """Generic method to write a command response.
