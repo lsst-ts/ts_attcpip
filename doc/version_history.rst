@@ -6,6 +6,17 @@
 Version History
 ###############
 
+v0.1.7
+======
+
+* Update the version of ts-conda-build to 0.4 in the conda recipe.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.6
 ======
 

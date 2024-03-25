@@ -12,7 +12,7 @@ build:
 
 test:
   requires:
-    - ts-conda-build =0.3
+    - ts-conda-build =0.4
     - ts-salobj {{ salobj_version }}
     - ts-tcpip
     - ts-utils
