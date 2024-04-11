@@ -6,6 +6,17 @@
 Version History
 ###############
 
+v0.1.8
+======
+
+* Fix the conda recipe.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.7
 ======
 
