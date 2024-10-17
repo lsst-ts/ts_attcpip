@@ -46,7 +46,7 @@ STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
 WAIT_TIMEOUT = 1.0
 
 # Timeout [s] for commands to report they're done.
-CMD_DONE_TIMEOUT = 5.0
+CMD_DONE_TIMEOUT = 60.0
 
 
 class AtTcpipCsc(salobj.ConfigurableCsc):
