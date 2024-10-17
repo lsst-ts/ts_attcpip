@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
 import logging
 import typing
 
@@ -80,5 +81,9 @@ class AtServerSimulator(tcpip.OneClientReadLoopServer):
         self.dispatch_callback = dispatch_callback
 
     async def read_and_dispatch(self) -> None:
-        data = await self.read_json()
-        await self.dispatch_callback(data=data)
+        try:
+            data = await self.read_json()
+            await self.dispatch_callback(data=data)
+        except asyncio.IncompleteReadError:
+            # Ignore
+            pass

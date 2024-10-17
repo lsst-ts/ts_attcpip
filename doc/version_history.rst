@@ -6,6 +6,17 @@
 Version History
 ###############
 
+v0.1.10
+=======
+
+* Handle an IncompleteReadError used in unit tests.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.9
 ======
 
