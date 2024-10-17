@@ -42,6 +42,12 @@ from .enums import (
 # List of all state commands.
 STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
 
+# Timeout [s] for wait operations.
+WAIT_TIMEOUT = 1.0
+
+# Timeout [s] for commands to report they're done.
+CMD_DONE_TIMEOUT = 5.0
+
 
 class AtTcpipCsc(salobj.ConfigurableCsc):
     """Base Configurable CSC with common code.
@@ -139,6 +145,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     def connected(self) -> bool:
         return self.cmd_evt_client.connected and self.telemetry_client.connected
 
+    async def wait_cmd_done(self, command: CommonCommand) -> None:
+        command_issued = await self.write_command(command=command)
+        try:
+            await asyncio.wait_for(command_issued.done, CMD_DONE_TIMEOUT)
+        except TimeoutError:
+            self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
+
     async def begin_disable(self, data: salobj.BaseMsgType) -> None:
         """Begin do_disable; called before state changes.
 
@@ -147,10 +160,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        await self.cmd_disable.ack_in_progress(data, CMD_DONE_TIMEOUT)
         command = CommonCommand.DISABLE
         if self.connected:
-            command_issued = await self.write_command(command=command)
-            await command_issued.done
+            await self.wait_cmd_done(command)
         else:
             self.log.warning(f"Not connected so not sending the {command} command.")
 
@@ -162,10 +175,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        await self.cmd_enable.ack_in_progress(data, CMD_DONE_TIMEOUT)
         command = CommonCommand.ENABLE
         if self.connected:
-            command_issued = await self.write_command(command=command)
-            await command_issued.done
+            await self.wait_cmd_done(command)
         else:
             self.log.warning(f"Not connected so not sending the {command} command.")
 
@@ -177,18 +190,17 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        await self.cmd_standby.ack_in_progress(data, CMD_DONE_TIMEOUT)
         command = CommonCommand.STANDBY
         if self.connected and self.summary_state in [
             salobj.State.DISABLED,
             salobj.State.ENABLED,
         ]:
-            command_issued = await self.write_command(command=command)
-            await command_issued.done
+            await self.wait_cmd_done(command)
             self.log.debug("Stopping telemetry task.")
             await self._stop_telemetry_task_and_client()
         elif self.connected and self.summary_state == salobj.State.FAULT:
-            command_issued = await self.write_command(command=command)
-            await command_issued.done
+            await self.wait_cmd_done(command)
         else:
             self.log.warning(
                 f"{self.connected=} and {self.summary_state=} so not "
@@ -204,11 +216,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        await self.cmd_start.ack_in_progress(data, CMD_DONE_TIMEOUT)
         await self.start_clients()
         command = CommonCommand.START
         if self.connected:
-            command_issued = await self.write_command(command=command)
-            await command_issued.done
+            await self.wait_cmd_done(command)
         else:
             self.log.warning(f"Not connected so not sending the {command} command.")
 
@@ -403,7 +415,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
         self.log.debug(f"Writing {data=}")
-        await self.cmd_evt_client.write_json(data)
+        await asyncio.wait_for(self.cmd_evt_client.write_json(data), WAIT_TIMEOUT)
         return command_issued
 
     async def call_set_write(self, data: dict[str, typing.Any]) -> None:
