@@ -6,6 +6,18 @@
 Version History
 ###############
 
+v0.1.12
+=======
+
+* Make simulator respond to unexpected state transition commands.
+* Make CSC handle unexpected AT server states.
+
+Requires:
+
+* ts_salobj
+* ts_tcpip >= 2
+* ts_utils
+
 v0.1.11
 =======
 
