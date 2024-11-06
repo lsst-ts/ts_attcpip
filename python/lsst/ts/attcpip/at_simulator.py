@@ -217,6 +217,13 @@ class AtSimulator:
 
     async def disable(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.DISABLED."""
+        if self.simulator_state not in [
+            sal_enums.State.STANDBY,
+            sal_enums.State.ENABLED,
+        ]:
+            await self.write_fail_response(sequence_id=sequence_id)
+            return
+
         await self.write_success_response(sequence_id=sequence_id)
         if self.go_to_fault_state:
             await self.fault()
@@ -228,6 +235,10 @@ class AtSimulator:
 
     async def enable(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.ENABLED."""
+        if self.simulator_state != sal_enums.State.DISABLED:
+            await self.write_fail_response(sequence_id=sequence_id)
+            return
+
         self.simulator_state = sal_enums.State.ENABLED
         await self.write_success_response(sequence_id=sequence_id)
         await self._write_evt(
@@ -236,6 +247,13 @@ class AtSimulator:
 
     async def standby(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.STANDBY."""
+        if self.simulator_state not in [
+            sal_enums.State.FAULT,
+            sal_enums.State.DISABLED,
+        ]:
+            await self.write_fail_response(sequence_id=sequence_id)
+            return
+
         self.simulator_state = sal_enums.State.STANDBY
         await self.write_success_response(sequence_id=sequence_id)
         await self._write_evt(
