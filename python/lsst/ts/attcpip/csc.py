@@ -126,6 +126,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         # Keep track of the issued commands.
         self.commands_issued: dict[int, CommandIssued] = dict()
 
+        # Keep track of the AT state for state transition commands.
+        self.at_state = sal_enums.State.OFFLINE
+
         # Keep track of unrecognized telemetry topics.
         self.unrecognized_telemetry_topics: set[str] = set()
 
@@ -152,6 +155,24 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         except TimeoutError:
             self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
 
+    async def perform_common_part_of_state_transition(
+        self,
+        command: CommonCommand,
+        state: sal_enums.State,
+        expected_states: list[sal_enums.State],
+    ) -> None:
+        if self.at_state in expected_states:
+            await self.wait_cmd_done(command)
+        elif self.at_state == state:
+            self.log.warning(
+                f"Server already in {state.name}. Not sending "
+                "command and proceeding with state transition."
+            )
+        else:
+            await self.fault(
+                code=None, report=f"Server in unexpected state {self.at_state}."
+            )
+
     async def begin_disable(self, data: salobj.BaseMsgType) -> None:
         """Begin do_disable; called before state changes.
 
@@ -160,10 +181,15 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        self.log.debug(f"begin_disable {self.summary_state=}, {self.at_state=}")
         await self.cmd_disable.ack_in_progress(data, CMD_DONE_TIMEOUT)
         command = CommonCommand.DISABLE
         if self.connected:
-            await self.wait_cmd_done(command)
+            await self.perform_common_part_of_state_transition(
+                command=command,
+                state=sal_enums.State.DISABLED,
+                expected_states=[sal_enums.State.STANDBY, sal_enums.State.ENABLED],
+            )
         else:
             self.log.warning(f"Not connected so not sending the {command} command.")
 
@@ -175,10 +201,15 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        self.log.debug(f"begin_enable {self.summary_state=}, {self.at_state=}")
         await self.cmd_enable.ack_in_progress(data, CMD_DONE_TIMEOUT)
         command = CommonCommand.ENABLE
         if self.connected:
-            await self.wait_cmd_done(command)
+            await self.perform_common_part_of_state_transition(
+                command=command,
+                state=sal_enums.State.ENABLED,
+                expected_states=[sal_enums.State.DISABLED],
+            )
         else:
             self.log.warning(f"Not connected so not sending the {command} command.")
 
@@ -190,13 +221,21 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        self.log.debug(f"begin_standby {self.summary_state=}, {self.at_state=}")
         await self.cmd_standby.ack_in_progress(data, CMD_DONE_TIMEOUT)
         command = CommonCommand.STANDBY
-        if self.connected and self.summary_state in [
-            salobj.State.DISABLED,
-            salobj.State.ENABLED,
-        ]:
-            await self.wait_cmd_done(command)
+        if self.connected and self.summary_state != salobj.State.FAULT:
+            if self.at_state == sal_enums.State.ENABLED:
+                await self.fault(
+                    code=None, report=f"Server in unexpected state {self.at_state}."
+                )
+                return
+
+            await self.perform_common_part_of_state_transition(
+                command=command,
+                state=sal_enums.State.STANDBY,
+                expected_states=[sal_enums.State.DISABLED],
+            )
             self.log.debug("Stopping telemetry task.")
             await self._stop_telemetry_task_and_client()
         elif self.connected and self.summary_state == salobj.State.FAULT:
@@ -216,6 +255,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         data : `DataType`
             Command data
         """
+        self.log.debug(f"end_start {self.summary_state=}, {self.at_state=}")
         await self.cmd_start.ack_in_progress(data, CMD_DONE_TIMEOUT)
         await self.start_clients()
         command = CommonCommand.START
@@ -322,8 +362,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 try:
                     state_evt = CommonEvent(data_id)
                     if state_evt == CommonEvent.SUMMARY_STATE:
-                        state = data[CommonEventArgument.SUMMARY_STATE]
-                        if state == sal_enums.State.FAULT:
+                        self.at_state = sal_enums.State(
+                            data[CommonEventArgument.SUMMARY_STATE]
+                        )
+                        if self.at_state == sal_enums.State.FAULT:
                             self.log.debug(
                                 f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
                             )
