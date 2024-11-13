@@ -95,7 +95,10 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
             assert attcpip.CommonEventArgument.TRACEBACK in data
 
     async def execute_command(
-        self, command: attcpip.CommonCommand, expected_state: sal_enums.State
+        self,
+        command: attcpip.CommonCommand,
+        expected_state: sal_enums.State,
+        expected_ack: attcpip.Ack,
     ) -> None:
         self.sequence_id += 1
         await self.cmd_evt_client.write_json(
@@ -108,9 +111,12 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
             ack=attcpip.Ack.ACK, sequence_id=self.sequence_id
         )
         await self.verify_command_response(
-            ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id
+            ack=expected_ack, sequence_id=self.sequence_id
         )
-        await self.verify_event(state=expected_state)
+
+        if expected_ack != attcpip.Ack.FAIL:
+            await self.verify_event(state=expected_state)
+
         assert self.simulator.simulator_state == expected_state
 
     async def test_stimulator_state_commands(self) -> None:
@@ -128,7 +134,7 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
 
             for command in commands_and_expected_states:
                 await self.execute_command(
-                    command, commands_and_expected_states[command]
+                    command, commands_and_expected_states[command], attcpip.Ack.SUCCESS
                 )
 
     async def test_fault_state(self) -> None:
@@ -139,8 +145,31 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
 
             command = attcpip.CommonCommand.START
             expected_state = sal_enums.State.FAULT
-            await self.execute_command(command, expected_state)
+            await self.execute_command(command, expected_state, attcpip.Ack.SUCCESS)
 
             command = attcpip.CommonCommand.STANDBY
             expected_state = sal_enums.State.STANDBY
-            await self.execute_command(command, expected_state)
+            await self.execute_command(command, expected_state, attcpip.Ack.SUCCESS)
+
+    async def test_failed_state_transition(self) -> None:
+        async with self.create_at_simulator(
+            go_to_fault_state=False
+        ), self.create_cmd_evt_client(self.simulator):
+            assert self.simulator.simulator_state == sal_enums.State.STANDBY
+
+            commands_and_states = [
+                (attcpip.CommonCommand.START, sal_enums.State.DISABLED),
+                (attcpip.CommonCommand.ENABLE, sal_enums.State.ENABLED),
+                (attcpip.CommonCommand.DISABLE, sal_enums.State.DISABLED),
+                (attcpip.CommonCommand.STANDBY, sal_enums.State.STANDBY),
+            ]
+            for command_and_state in commands_and_states:
+                command = command_and_state[0]
+                expected_state = command_and_state[1]
+                # The first time it passes since the simulator state is not yet
+                # the expected state.
+                await self.execute_command(command, expected_state, attcpip.Ack.SUCCESS)
+
+                # The first time it fails since the simulator state now is the
+                # expected state.
+                await self.execute_command(command, expected_state, attcpip.Ack.FAIL)
