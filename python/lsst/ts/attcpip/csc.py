@@ -125,6 +125,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         # Keep track of the issued commands.
         self.commands_issued: dict[int, CommandIssued] = dict()
+        self.cmd_done_timeout = CMD_DONE_TIMEOUT
 
         # Keep track of the AT state for state transition commands.
         self.at_state = sal_enums.State.OFFLINE
@@ -151,7 +152,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     async def wait_cmd_done(self, command: CommonCommand) -> None:
         command_issued = await self.write_command(command=command)
         try:
-            await asyncio.wait_for(command_issued.done, CMD_DONE_TIMEOUT)
+            await asyncio.wait_for(command_issued.done, self.cmd_done_timeout)
         except TimeoutError:
             self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
 
@@ -182,7 +183,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_disable {self.summary_state=}, {self.at_state=}")
-        await self.cmd_disable.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_disable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.DISABLE
         if self.connected:
             await self.perform_common_part_of_state_transition(
@@ -202,7 +203,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_enable {self.summary_state=}, {self.at_state=}")
-        await self.cmd_enable.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_enable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.ENABLE
         if self.connected:
             await self.perform_common_part_of_state_transition(
@@ -222,7 +223,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_standby {self.summary_state=}, {self.at_state=}")
-        await self.cmd_standby.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_standby.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.STANDBY
         if self.connected and self.summary_state != salobj.State.FAULT:
             if self.at_state == sal_enums.State.ENABLED:
@@ -256,7 +257,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"end_start {self.summary_state=}, {self.at_state=}")
-        await self.cmd_start.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_start.ack_in_progress(data, self.cmd_done_timeout)
         await self.start_clients()
         command = CommonCommand.START
         if self.connected:
