@@ -192,7 +192,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 expected_states=[sal_enums.State.STANDBY, sal_enums.State.ENABLED],
             )
         else:
-            self.log.warning(f"Not connected so not sending the {command} command.")
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
+            )
 
     async def begin_enable(self, data: salobj.BaseMsgType) -> None:
         """Begin do_enable; called before state changes.
@@ -212,7 +214,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 expected_states=[sal_enums.State.DISABLED],
             )
         else:
-            self.log.warning(f"Not connected so not sending the {command} command.")
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
+            )
 
     async def begin_standby(self, data: salobj.BaseMsgType) -> None:
         """Begin do_standby; called before the state changes.
@@ -242,9 +246,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         elif self.connected and self.summary_state == salobj.State.FAULT:
             await self.wait_cmd_done(command)
         else:
-            self.log.warning(
-                f"{self.connected=} and {self.summary_state=} so not "
-                f"sending the {command.value} command."
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
             )
 
     async def end_start(self, data: salobj.BaseMsgType) -> None:
@@ -263,7 +266,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         if self.connected:
             await self.wait_cmd_done(command)
         else:
-            self.log.warning(f"Not connected so not sending the {command} command.")
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
+            )
 
     async def start_clients(self) -> None:
         """Start the clients for the TCP/IPconnections as well as background
