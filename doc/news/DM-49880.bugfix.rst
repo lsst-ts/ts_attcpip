@@ -1,0 +1,1 @@
+Fix package version module generation.
