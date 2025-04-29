@@ -6,6 +6,27 @@
 Version History
 ###############
 
+.. towncrier release notes start
+
+
+v0.1.13 (2025-04-29)
+====================
+
+New Features
+------------
+
+- Switched to ruff and towncrier. (`DM-49880 <https://rubinobs.atlassian.net//browse/DM-49880>`_)
+- Handled unexpected AT states. (`DM-49880 <https://rubinobs.atlassian.net//browse/DM-49880>`_)
+- Added a summary state to the simulator. (`DM-49880 <https://rubinobs.atlassian.net//browse/DM-49880>`_)
+- Added backward compatible support for the crioSummaryState event. (`DM-49880 <https://rubinobs.atlassian.net//browse/DM-49880>`_)
+- Made sure to go to FAULT when unexpectedly disconnected. (`DM-49880 <https://rubinobs.atlassian.net//browse/DM-49880>`_)
+
+
+Bug Fixes
+---------
+
+- Fix package version module generation. (`DM-49880 <https://rubinobs.atlassian.net//browse/DM-49880>`_)
+
 v0.1.12
 =======
 
