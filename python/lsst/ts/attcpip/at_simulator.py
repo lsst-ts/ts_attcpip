@@ -52,16 +52,28 @@ class AtSimulator:
         The command and events port.
     telemetry_port : `int`
         The telemetry port.
+    simulator_state : `sal_enums.State`
+        The summary state to start with.
+    send_state_event : `bool`
+        Send the summary state event (True) or not (False). Unit tests can set
+        this to False to mock networking issues.
     """
 
-    def __init__(self, host: str, cmd_evt_port: int, telemetry_port: int) -> None:
+    def __init__(
+        self,
+        host: str,
+        cmd_evt_port: int,
+        telemetry_port: int,
+        simulator_state: sal_enums.State = sal_enums.State.STANDBY,
+        send_state_event: bool = True,
+    ) -> None:
         self.log = logging.getLogger(type(self).__name__)
         self.cmd_evt_server = AtServerSimulator(
             host=host,
             port=cmd_evt_port,
             log=self.log,
             dispatch_callback=self.cmd_evt_dispatch_callback,
-            connect_callback=self.cmd_evt_connect_callback,
+            connect_callback=self.base_cmd_evt_connect_callback,
             name="CmdEvtServer",
         )
         self.telemetry_server = AtServerSimulator(
@@ -83,7 +95,10 @@ class AtSimulator:
         # - enable: DISABLED -> ENABLED
         # - disable: ENABLED -> DISABLED
         # - standby: DISABLED -> STANDBY
-        self.simulator_state = sal_enums.State.STANDBY
+        self.simulator_state = simulator_state
+
+        # Send the summary state event or not.
+        self.send_state_event = send_state_event
 
         # Dict of command: function.
         self.dispatch_dict: dict[str, typing.Callable] = {
@@ -105,9 +120,33 @@ class AtSimulator:
         schema_dir = pathlib.Path(__file__).parent / "schemas"
         load_schemas(schema_dir=schema_dir)
 
+    async def base_cmd_evt_connect_callback(
+        self, server: tcpip.OneClientServer
+    ) -> None:
+        """Callback to call when a command/event client connects or
+        disconnects.
+
+        This method will call cmd_evt_connect_callback which needs to be
+        implemented by subclasses.
+
+        Parameters
+        ----------
+        server : `tcpip.OneClientServer`
+            The server to which the client connected.
+        """
+        await self.cmd_evt_connect_callback(server)
+        if self.cmd_evt_server.connected and self.send_state_event:
+            self.log.debug(
+                f"Sending {CommonEvent.SUMMARY_STATE.value} with {self.simulator_state=}"
+            )
+            await self._write_evt(
+                evt_id=CommonEvent.SUMMARY_STATE,
+                summaryState=self.simulator_state,
+            )
+
     @abc.abstractmethod
     async def cmd_evt_connect_callback(self, server: tcpip.OneClientServer) -> None:
-        """Callback to call when a command/event client client connects or
+        """Callback to call when a command/event client connects or
         disconnects.
 
         Parameters
@@ -203,8 +242,6 @@ class AtSimulator:
             return False
 
         sequence_id = data[CommonCommandArgument.SEQUENCE_ID]
-        if sequence_id - self.last_sequence_id != 1:
-            return False
         self.last_sequence_id = sequence_id
 
         json_schema = registry[payload_id]
@@ -228,10 +265,12 @@ class AtSimulator:
         if self.go_to_fault_state:
             await self.fault()
         else:
-            self.simulator_state = sal_enums.State.DISABLED
-            await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.DISABLED
-            )
+            if self.send_state_event:
+                self.simulator_state = sal_enums.State.DISABLED
+                await self._write_evt(
+                    evt_id=CommonEvent.SUMMARY_STATE,
+                    summaryState=sal_enums.State.DISABLED,
+                )
 
     async def enable(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.ENABLED."""
@@ -239,11 +278,12 @@ class AtSimulator:
             await self.write_fail_response(sequence_id=sequence_id)
             return
 
-        self.simulator_state = sal_enums.State.ENABLED
-        await self.write_success_response(sequence_id=sequence_id)
-        await self._write_evt(
-            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.ENABLED
-        )
+        if self.send_state_event:
+            self.simulator_state = sal_enums.State.ENABLED
+            await self.write_success_response(sequence_id=sequence_id)
+            await self._write_evt(
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.ENABLED
+            )
 
     async def standby(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.STANDBY."""
@@ -254,11 +294,12 @@ class AtSimulator:
             await self.write_fail_response(sequence_id=sequence_id)
             return
 
-        self.simulator_state = sal_enums.State.STANDBY
-        await self.write_success_response(sequence_id=sequence_id)
-        await self._write_evt(
-            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.STANDBY
-        )
+        if self.send_state_event:
+            self.simulator_state = sal_enums.State.STANDBY
+            await self.write_success_response(sequence_id=sequence_id)
+            await self._write_evt(
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.STANDBY
+            )
 
     async def send_detailed_state_events(self) -> None:
         """Send detailed state events.

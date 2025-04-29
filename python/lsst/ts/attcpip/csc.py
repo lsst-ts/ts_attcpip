@@ -45,6 +45,9 @@ STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
 # Timeout [s] for wait operations.
 WAIT_TIMEOUT = 1.0
 
+# Timeout [s] for the summary state event to be sent by AT.
+SUMMARY_STATE_TIMEOUT = 5.0
+
 # Timeout [s] for commands to report they're done.
 CMD_DONE_TIMEOUT = 60.0
 
@@ -125,9 +128,12 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         # Keep track of the issued commands.
         self.commands_issued: dict[int, CommandIssued] = dict()
+        self.cmd_done_timeout = CMD_DONE_TIMEOUT
 
         # Keep track of the AT state for state transition commands.
         self.at_state = sal_enums.State.OFFLINE
+        # Event to set for unit tests.
+        self.at_state_event = asyncio.Event()
 
         # Keep track of unrecognized telemetry topics.
         self.unrecognized_telemetry_topics: set[str] = set()
@@ -151,7 +157,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     async def wait_cmd_done(self, command: CommonCommand) -> None:
         command_issued = await self.write_command(command=command)
         try:
-            await asyncio.wait_for(command_issued.done, CMD_DONE_TIMEOUT)
+            await asyncio.wait_for(command_issued.done, self.cmd_done_timeout)
         except TimeoutError:
             self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
 
@@ -170,7 +176,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             )
         else:
             await self.fault(
-                code=None, report=f"Server in unexpected state {self.at_state}."
+                code=None, report=f"AT in unexpected state {self.at_state}."
             )
 
     async def begin_disable(self, data: salobj.BaseMsgType) -> None:
@@ -182,7 +188,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_disable {self.summary_state=}, {self.at_state=}")
-        await self.cmd_disable.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_disable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.DISABLE
         if self.connected:
             await self.perform_common_part_of_state_transition(
@@ -191,7 +197,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 expected_states=[sal_enums.State.STANDBY, sal_enums.State.ENABLED],
             )
         else:
-            self.log.warning(f"Not connected so not sending the {command} command.")
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
+            )
 
     async def begin_enable(self, data: salobj.BaseMsgType) -> None:
         """Begin do_enable; called before state changes.
@@ -202,7 +210,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_enable {self.summary_state=}, {self.at_state=}")
-        await self.cmd_enable.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_enable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.ENABLE
         if self.connected:
             await self.perform_common_part_of_state_transition(
@@ -211,7 +219,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 expected_states=[sal_enums.State.DISABLED],
             )
         else:
-            self.log.warning(f"Not connected so not sending the {command} command.")
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
+            )
 
     async def begin_standby(self, data: salobj.BaseMsgType) -> None:
         """Begin do_standby; called before the state changes.
@@ -222,12 +232,12 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_standby {self.summary_state=}, {self.at_state=}")
-        await self.cmd_standby.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_standby.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.STANDBY
         if self.connected and self.summary_state != salobj.State.FAULT:
             if self.at_state == sal_enums.State.ENABLED:
                 await self.fault(
-                    code=None, report=f"Server in unexpected state {self.at_state}."
+                    code=None, report=f"AT in unexpected state {self.at_state}."
                 )
                 return
 
@@ -241,9 +251,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         elif self.connected and self.summary_state == salobj.State.FAULT:
             await self.wait_cmd_done(command)
         else:
-            self.log.warning(
-                f"{self.connected=} and {self.summary_state=} so not "
-                f"sending the {command.value} command."
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
             )
 
     async def end_start(self, data: salobj.BaseMsgType) -> None:
@@ -256,13 +265,29 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"end_start {self.summary_state=}, {self.at_state=}")
-        await self.cmd_start.ack_in_progress(data, CMD_DONE_TIMEOUT)
+        await self.cmd_start.ack_in_progress(data, self.cmd_done_timeout)
         await self.start_clients()
         command = CommonCommand.START
         if self.connected:
-            await self.wait_cmd_done(command)
+            try:
+                async with asyncio.timeout(SUMMARY_STATE_TIMEOUT):
+                    await self.at_state_event.wait()
+            except asyncio.TimeoutError:
+                await self.fault(
+                    code=None,
+                    report=f"Not receiving AT summary state so not sending the {command} command.",
+                )
+            if self.at_state == sal_enums.State.STANDBY:
+                self.log.debug(f"{self.at_state=} so sending the {command} command.")
+                await self.wait_cmd_done(command)
+            else:
+                self.log.debug(
+                    f"{self.at_state=} so NOT sending the {command} command."
+                )
         else:
-            self.log.warning(f"Not connected so not sending the {command} command.")
+            await self.fault(
+                code=None, report=f"Not connected so not sending the {command} command."
+            )
 
     async def start_clients(self) -> None:
         """Start the clients for the TCP/IPconnections as well as background
@@ -358,40 +383,80 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
             # If data_id starts with "evt_" then handle the event data.
             if data_id.startswith("evt_"):
-                # Handle summary state and detailed state events.
-                try:
-                    state_evt = CommonEvent(data_id)
-                    if state_evt == CommonEvent.SUMMARY_STATE:
-                        self.at_state = sal_enums.State(
-                            data[CommonEventArgument.SUMMARY_STATE]
-                        )
-                        if self.at_state == sal_enums.State.FAULT:
-                            self.log.debug(
-                                f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
-                            )
-                            await self.fault(code=None, report="Server in FAULT state.")
-                except ValueError:
-                    pass
-                await self.call_set_write(data=data)
+                await self._handle_event(data, data_id)
             elif CommonCommandArgument.SEQUENCE_ID in data:
-                sequence_id = data[CommonCommandArgument.SEQUENCE_ID]
-                response = data[CommonCommandArgument.ID]
-                match response:
-                    case Ack.ACK:
-                        self.commands_issued[sequence_id].set_ack()
-                    case Ack.NOACK:
-                        self.commands_issued[sequence_id].set_noack()
-                    case Ack.SUCCESS:
-                        self.commands_issued[sequence_id].set_success()
-                    case Ack.FAIL:
-                        self.commands_issued[sequence_id].set_fail()
-                    case _:
-                        raise RuntimeError(f"Received unexpected {response=}.")
+                await self._handle_command_response(data)
             else:
                 await self.fault(
                     code=None,
                     report=f"Received incorrect event or command {data=}.",
                 )
+
+    async def _handle_event(self, data: typing.Any, data_id: str) -> None:
+        # Handle summary state and detailed state events.
+        try:
+            state_evt = CommonEvent(data_id)
+            if state_evt == CommonEvent.SUMMARY_STATE:
+                self.at_state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
+                self.log.info(
+                    f"Received AT state {self.at_state.name} and CSC state is {self.summary_state.name}."
+                )
+                if self.at_state == sal_enums.State.FAULT:
+                    self.log.debug(
+                        f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
+                    )
+                    await self.fault(code=None, report="AT in FAULT state.")
+                else:
+                    if not self.at_state_event.is_set():
+                        # CSC state: DISABLED because the event is awaited in
+                        # end_start.
+                        self.at_state_event.set()
+                    elif (
+                        self.summary_state == sal_enums.State.DISABLED
+                        and self.at_state == sal_enums.State.STANDBY
+                    ) or (
+                        self.summary_state == sal_enums.State.ENABLED
+                        and self.at_state
+                        in [sal_enums.State.STANDBY, sal_enums.State.DISABLED]
+                    ):
+                        report = (
+                            f"AT unexpectedly went to {self.at_state.name} "
+                            f"while CSC in {self.summary_state.name}."
+                        )
+                        self.log.error(report)
+                        await self.fault(
+                            code=None,
+                            report=report,
+                        )
+                if hasattr(self, "evt_crioSummaryState"):
+                    kwargs = {key: value for key, value in data.items() if key != "id"}
+                    self.log.debug(f"Sending evt_crioSummaryState with data {kwargs}.")
+                    await self.evt_crioSummaryState.set_write(**kwargs)
+            else:
+                await self.call_set_write(data=data)
+        except ValueError:
+            pass
+
+    async def _handle_command_response(self, data: typing.Any) -> None:
+        # Handle command responses.
+        sequence_id = data[CommonCommandArgument.SEQUENCE_ID]
+        response = data[CommonCommandArgument.ID]
+        if sequence_id in self.commands_issued:
+            match response:
+                case Ack.ACK:
+                    self.commands_issued[sequence_id].set_ack()
+                case Ack.NOACK:
+                    self.commands_issued[sequence_id].set_noack()
+                case Ack.SUCCESS:
+                    self.commands_issued[sequence_id].set_success()
+                case Ack.FAIL:
+                    self.commands_issued[sequence_id].set_fail()
+                case _:
+                    raise RuntimeError(f"Received unexpected {response=}.")
+        else:
+            self.log.warning(
+                f"Received command response for unknown {sequence_id=}. Ignoring."
+            )
 
     async def telemetry_loop(self) -> None:
         """Execute the telemetry loop.

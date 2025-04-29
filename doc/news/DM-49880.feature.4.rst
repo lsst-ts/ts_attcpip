@@ -1,0 +1,1 @@
+Added backward compatible support for the crioSummaryState event.
