@@ -398,7 +398,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             state_evt = CommonEvent(data_id)
             if state_evt == CommonEvent.SUMMARY_STATE:
                 self.at_state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
-                self.log.debug(
+                self.log.info(
                     f"Received AT state {self.at_state.name} and CSC state is {self.summary_state.name}."
                 )
                 if self.at_state == sal_enums.State.FAULT:
@@ -428,9 +428,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                             code=None,
                             report=report,
                         )
+                if hasattr(self, "evt_crioSummaryState"):
+                    kwargs = {key: value for key, value in data.items() if key != "id"}
+                    self.log.debug(f"Sending evt_crioSummaryState with data {kwargs}.")
+                    await self.evt_crioSummaryState.set_write(**kwargs)
+            else:
+                await self.call_set_write(data=data)
         except ValueError:
             pass
-        await self.call_set_write(data=data)
 
     async def _handle_command_response(self, data: typing.Any) -> None:
         # Handle command responses.
