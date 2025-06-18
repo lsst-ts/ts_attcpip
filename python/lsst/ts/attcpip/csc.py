@@ -194,6 +194,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             sal_enums.State.DISABLED,
             sal_enums.State.STANDBY,
             sal_enums.State.FAULT,
+            sal_enums.State.OFFLINE,
         ]
         await self.cmd_disable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.DISABLE
@@ -217,7 +218,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_enable {self.summary_state=}, {self.at_state=}")
-        self.expected_at_states = [sal_enums.State.DISABLED, sal_enums.State.ENABLED]
+        self.expected_at_states = [
+            sal_enums.State.DISABLED,
+            sal_enums.State.ENABLED,
+            sal_enums.State.OFFLINE,
+        ]
         await self.cmd_enable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.ENABLE
         if self.connected:
@@ -243,6 +248,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.expected_at_states = [
             sal_enums.State.STANDBY,
             sal_enums.State.FAULT,
+            sal_enums.State.OFFLINE,
         ]
         await self.cmd_standby.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.STANDBY
@@ -281,6 +287,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             sal_enums.State.STANDBY,
             sal_enums.State.DISABLED,
             sal_enums.State.ENABLED,
+            sal_enums.State.OFFLINE,
         ]
         await self.cmd_start.ack_in_progress(data, self.cmd_done_timeout)
         await self.start_clients()
