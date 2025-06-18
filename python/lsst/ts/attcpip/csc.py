@@ -132,6 +132,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         # Keep track of the AT state for state transition commands.
         self.at_state = sal_enums.State.OFFLINE
+        self.expected_at_states: list[sal_enums.State] = []
         # Event to set for unit tests.
         self.at_state_event = asyncio.Event()
 
@@ -157,7 +158,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     async def wait_cmd_done(self, command: CommonCommand) -> None:
         command_issued = await self.write_command(command=command)
         try:
-            await asyncio.wait_for(command_issued.done, self.cmd_done_timeout)
+            async with asyncio.timeout(self.cmd_done_timeout):
+                await command_issued.done
         except TimeoutError:
             self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
 
@@ -188,6 +190,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_disable {self.summary_state=}, {self.at_state=}")
+        self.expected_at_states = [
+            sal_enums.State.DISABLED,
+            sal_enums.State.STANDBY,
+            sal_enums.State.FAULT,
+        ]
         await self.cmd_disable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.DISABLE
         if self.connected:
@@ -210,6 +217,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_enable {self.summary_state=}, {self.at_state=}")
+        self.expected_at_states = [sal_enums.State.DISABLED, sal_enums.State.ENABLED]
         await self.cmd_enable.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.ENABLE
         if self.connected:
@@ -232,6 +240,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"begin_standby {self.summary_state=}, {self.at_state=}")
+        self.expected_at_states = [
+            sal_enums.State.STANDBY,
+            sal_enums.State.FAULT,
+        ]
         await self.cmd_standby.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.STANDBY
         if self.connected and self.summary_state != salobj.State.FAULT:
@@ -265,6 +277,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.log.debug(f"end_start {self.summary_state=}, {self.at_state=}")
+        self.expected_at_states = [
+            sal_enums.State.STANDBY,
+            sal_enums.State.DISABLED,
+            sal_enums.State.ENABLED,
+        ]
         await self.cmd_start.ack_in_progress(data, self.cmd_done_timeout)
         await self.start_clients()
         command = CommonCommand.START
@@ -394,48 +411,46 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
     async def _handle_event(self, data: typing.Any, data_id: str) -> None:
         # Handle summary state and detailed state events.
+        state_evt: CommonEvent | None = None
         try:
             state_evt = CommonEvent(data_id)
-            if state_evt == CommonEvent.SUMMARY_STATE:
-                self.at_state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
-                self.log.info(
-                    f"Received AT state {self.at_state.name} and CSC state is {self.summary_state.name}."
-                )
-                if self.at_state == sal_enums.State.FAULT:
-                    self.log.debug(
-                        f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
-                    )
-                    await self.fault(code=None, report="AT in FAULT state.")
-                else:
-                    if not self.at_state_event.is_set():
-                        # CSC state: DISABLED because the event is awaited in
-                        # end_start.
-                        self.at_state_event.set()
-                    elif (
-                        self.summary_state == sal_enums.State.DISABLED
-                        and self.at_state == sal_enums.State.STANDBY
-                    ) or (
-                        self.summary_state == sal_enums.State.ENABLED
-                        and self.at_state
-                        in [sal_enums.State.STANDBY, sal_enums.State.DISABLED]
-                    ):
-                        report = (
-                            f"AT unexpectedly went to {self.at_state.name} "
-                            f"while CSC in {self.summary_state.name}."
-                        )
-                        self.log.error(report)
-                        await self.fault(
-                            code=None,
-                            report=report,
-                        )
-                if hasattr(self, "evt_crioSummaryState"):
-                    kwargs = {key: value for key, value in data.items() if key != "id"}
-                    self.log.debug(f"Sending evt_crioSummaryState with data {kwargs}.")
-                    await self.evt_crioSummaryState.set_write(**kwargs)
-            else:
-                await self.call_set_write(data=data)
         except ValueError:
             pass
+
+        if state_evt == CommonEvent.SUMMARY_STATE:
+            self.at_state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
+            self.log.info(
+                f"Received AT state {self.at_state.name} and CSC state is {self.summary_state.name}. "
+                f"Expected AT states are {self.expected_at_states}."
+            )
+            if self.at_state == sal_enums.State.FAULT:
+                self.log.debug(
+                    f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
+                )
+                await self.fault(code=None, report="AT in FAULT state.")
+            else:
+                if not self.at_state_event.is_set():
+                    # CSC state: DISABLED because the event is awaited in
+                    # end_start.
+                    self.at_state_event.set()
+                if self.at_state not in self.expected_at_states:
+                    report = (
+                        f"AT unexpectedly went to {self.at_state.name} "
+                        f"while CSC in {self.summary_state.name}."
+                    )
+                    self.log.error(report)
+                    await self.fault(
+                        code=None,
+                        report=report,
+                    )
+            if hasattr(self, "evt_crioSummaryState"):
+                kwargs = {key: value for key, value in data.items() if key != "id"}
+                self.log.debug(f"Sending evt_crioSummaryState with data {kwargs}.")
+                await self.evt_crioSummaryState.set_write(**kwargs)
+            else:
+                await self.call_set_write(data=data)
+        else:
+            await self.call_set_write(data=data)
 
     async def _handle_command_response(self, data: typing.Any) -> None:
         # Handle command responses.
@@ -522,7 +537,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
         self.log.debug(f"Writing {data=}")
-        await asyncio.wait_for(self.cmd_evt_client.write_json(data), WAIT_TIMEOUT)
+        async with asyncio.timeout(WAIT_TIMEOUT):
+            await self.cmd_evt_client.write_json(data)
         return command_issued
 
     async def call_set_write(self, data: dict[str, typing.Any]) -> None:

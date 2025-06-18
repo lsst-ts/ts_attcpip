@@ -167,6 +167,30 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 assert csc.cmd_evt_client.connected
                 assert csc.telemetry_client.connected
 
+    async def test_complete_state_cycle(self) -> None:
+        async with (
+            self.create_at_simulator(go_to_fault_state=False),
+            attcpip.AtTcpipCsc(
+                name="Test",
+                index=0,
+                config_schema=CONFIG_SCHEMA,
+                config_dir=CONFIG_DIR,
+                initial_state=salobj.State.STANDBY,
+                simulation_mode=1,
+            ) as csc,
+            salobj.Remote(
+                domain=csc.domain,
+                name=csc.salinfo.name,
+                index=csc.salinfo.index,
+            ) as remote,
+        ):
+            data = await self.set_csc_simulator(csc, remote)
+
+            await csc.do_start(data)
+            await csc.do_enable(data)
+            await csc.do_disable(data)
+            await csc.do_standby(data)
+
     async def test_csc_with_at_in_unexpected_but_acceptable_state(self) -> None:
         for simulator_state in [
             sal_enums.State.DISABLED,
@@ -220,8 +244,18 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             assert csc.cmd_evt_client.connected
             assert csc.telemetry_client.connected
 
+            await csc.do_enable(data)
+            assert self.simulator.simulator_state == sal_enums.State.ENABLED
+            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
+            assert data.summaryState == sal_enums.State.ENABLED
+
+            await csc.do_disable(data)
+            assert self.simulator.simulator_state == sal_enums.State.DISABLED
+            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
+            assert data.summaryState == sal_enums.State.DISABLED
+
             await self.simulator.cmd_evt_dispatch_callback(
-                data={"id": "cmd_standby", "sequence_id": 10}
+                data={"id": "cmd_enable", "sequence_id": 10}
             )
             data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
             assert data.summaryState == sal_enums.State.FAULT
