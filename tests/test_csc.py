@@ -249,13 +249,8 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
             assert data.summaryState == sal_enums.State.ENABLED
 
-            await csc.do_disable(data)
-            assert self.simulator.simulator_state == sal_enums.State.DISABLED
-            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-            assert data.summaryState == sal_enums.State.DISABLED
-
             await self.simulator.cmd_evt_dispatch_callback(
-                data={"id": "cmd_enable", "sequence_id": 10}
+                data={"id": "cmd_disable", "sequence_id": -1}
             )
             data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
             assert data.summaryState == sal_enums.State.FAULT
