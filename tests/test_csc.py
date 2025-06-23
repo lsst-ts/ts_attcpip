@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
 import contextlib
 import os
 import pathlib
@@ -159,13 +160,16 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
                 await remote.evt_errorCode.next(flush=False, timeout=TIMEOUT)
                 assert csc.cmd_evt_client.connected
-                assert csc.telemetry_client.connected
+                assert not csc.telemetry_client.connected
+
+                await csc.simulator.standby(sequence_id=-1)
+                await asyncio.sleep(0.2)
 
                 await csc.do_standby(data)
                 assert self.simulator.simulator_state == sal_enums.State.STANDBY
                 await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
                 assert csc.cmd_evt_client.connected
-                assert csc.telemetry_client.connected
+                assert not csc.telemetry_client.connected
 
     async def test_complete_state_cycle(self) -> None:
         async with (
@@ -255,7 +259,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
             assert data.summaryState == sal_enums.State.FAULT
 
-    async def test_not_receiving_summary_state_event(self) -> None:
+    async def test_not_receiving_summary_state_event_unexpected(self) -> None:
         simulator_state = sal_enums.State.STANDBY
         async with (
             self.create_at_simulator(
@@ -281,7 +285,42 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
 
             await csc.do_start(data)
             data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
+
+            # The CSC should still work if no state event is received from AT.
             assert data.summaryState == sal_enums.State.FAULT
+            assert csc.cmd_evt_client.connected
+            assert not csc.telemetry_client.connected
+
+    async def test_not_receiving_summary_state_event_expected(self) -> None:
+        simulator_state = sal_enums.State.STANDBY
+        async with (
+            self.create_at_simulator(
+                go_to_fault_state=False,
+                simulator_state=simulator_state,
+                send_state_event=False,
+            ),
+            attcpip.AtTcpipCsc(
+                name="Test",
+                index=0,
+                config_schema=CONFIG_SCHEMA,
+                config_dir=CONFIG_DIR,
+                initial_state=salobj.State.STANDBY,
+                simulation_mode=1,
+                expect_any_at_state_event=False,
+            ) as csc,
+            salobj.Remote(
+                domain=csc.domain,
+                name=csc.salinfo.name,
+                index=csc.salinfo.index,
+            ) as remote,
+        ):
+            data = await self.set_csc_simulator(csc, remote, simulator_state)
+
+            await csc.do_start(data)
+            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
+
+            # The CSC should still work if no state event is received from AT.
+            assert data.summaryState == sal_enums.State.DISABLED
             assert csc.cmd_evt_client.connected
             assert csc.telemetry_client.connected
 

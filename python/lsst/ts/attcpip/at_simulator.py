@@ -23,7 +23,6 @@ from __future__ import annotations
 
 __all__ = ["AtSimulator"]
 
-import abc
 import logging
 import pathlib
 import types
@@ -105,7 +104,7 @@ class AtSimulator:
             CommonCommand.DISABLE: self.disable,
             CommonCommand.ENABLE: self.enable,
             CommonCommand.STANDBY: self.standby,
-            CommonCommand.START: self.disable,
+            CommonCommand.START: self.start,
         }
 
         # Go to FAULT state when receiving the "start" command or not.
@@ -144,7 +143,6 @@ class AtSimulator:
                 summaryState=self.simulator_state,
             )
 
-    @abc.abstractmethod
     async def cmd_evt_connect_callback(self, server: tcpip.OneClientServer) -> None:
         """Callback to call when a command/event client connects or
         disconnects.
@@ -252,11 +250,11 @@ class AtSimulator:
             return False
         return True
 
-    async def disable(self, *, sequence_id: int) -> None:
-        """Switch to sal_enums.State.DISABLED."""
+    async def start(self, *, sequence_id: int) -> None:
+        """Start and switch to sal_enums.State.DISABLED."""
+        self.log.debug("Begin start.")
         if self.simulator_state not in [
             sal_enums.State.STANDBY,
-            sal_enums.State.ENABLED,
         ]:
             await self.write_fail_response(sequence_id=sequence_id)
             return
@@ -265,28 +263,48 @@ class AtSimulator:
         if self.go_to_fault_state:
             await self.fault()
         else:
+            self.simulator_state = sal_enums.State.DISABLED
             if self.send_state_event:
-                self.simulator_state = sal_enums.State.DISABLED
                 await self._write_evt(
-                    evt_id=CommonEvent.SUMMARY_STATE,
-                    summaryState=sal_enums.State.DISABLED,
+                    evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
                 )
+        self.log.debug("End start.")
+
+    async def disable(self, *, sequence_id: int) -> None:
+        """Switch to sal_enums.State.DISABLED."""
+        self.log.debug("Begin disable.")
+        if self.simulator_state not in [
+            sal_enums.State.ENABLED,
+        ]:
+            await self.write_fail_response(sequence_id=sequence_id)
+            return
+
+        await self.write_success_response(sequence_id=sequence_id)
+        self.simulator_state = sal_enums.State.DISABLED
+        if self.send_state_event:
+            await self._write_evt(
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
+            )
+        self.log.debug("End disable.")
 
     async def enable(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.ENABLED."""
+        self.log.debug("Begin enable.")
         if self.simulator_state != sal_enums.State.DISABLED:
             await self.write_fail_response(sequence_id=sequence_id)
             return
 
+        await self.write_success_response(sequence_id=sequence_id)
+        self.simulator_state = sal_enums.State.ENABLED
         if self.send_state_event:
-            self.simulator_state = sal_enums.State.ENABLED
-            await self.write_success_response(sequence_id=sequence_id)
             await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.ENABLED
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
             )
+        self.log.debug("End enable.")
 
     async def standby(self, *, sequence_id: int) -> None:
         """Switch to sal_enums.State.STANDBY."""
+        self.log.debug("Begin standby.")
         if self.simulator_state not in [
             sal_enums.State.FAULT,
             sal_enums.State.DISABLED,
@@ -294,12 +312,13 @@ class AtSimulator:
             await self.write_fail_response(sequence_id=sequence_id)
             return
 
+        await self.write_success_response(sequence_id=sequence_id)
+        self.simulator_state = sal_enums.State.STANDBY
         if self.send_state_event:
-            self.simulator_state = sal_enums.State.STANDBY
-            await self.write_success_response(sequence_id=sequence_id)
             await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.STANDBY
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
             )
+        self.log.debug("End standby.")
 
     async def send_detailed_state_events(self) -> None:
         """Send detailed state events.
