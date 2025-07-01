@@ -164,7 +164,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
     @property
     def connected(self) -> bool:
-        return self.cmd_evt_client.connected and self.telemetry_client.connected
+        return self.cmd_evt_client.connected
 
     async def wait_cmd_done(self, command: CommonCommand) -> None:
         command_issued = await self.write_command(command=command)
@@ -293,7 +293,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             await self._stop_telemetry_task_and_client()
         elif self.connected and self.summary_state == salobj.State.FAULT:
             if (
-                self.at_state not in [sal_enums.State.FAULT, sal_enums.State.STANDBY]
+                self.at_state in [sal_enums.State.FAULT, sal_enums.State.STANDBY]
                 or not self.expect_any_at_state_event
             ):
                 try:
