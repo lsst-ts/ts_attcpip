@@ -44,7 +44,6 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         self,
         go_to_fault_state: bool,
         simulator_state: sal_enums.State,
-        send_state_event: bool = True,
     ) -> typing.AsyncGenerator[None, None]:
         with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
             async with attcpip.AtSimulator(
@@ -52,7 +51,6 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 cmd_evt_port=5000,
                 telemetry_port=6000,
                 simulator_state=simulator_state,
-                send_state_event=send_state_event,
             ) as self.simulator:
                 self.simulator.go_to_fault_state = go_to_fault_state
                 await self.simulator.cmd_evt_server.start_task
@@ -216,10 +214,3 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 go_to_fault_state=False, simulator_state=state
             ), self.create_cmd_evt_client(self.simulator, state):
                 assert self.simulator.simulator_state == state
-
-    async def test_no_summary_state_event(self) -> None:
-        state = sal_enums.State.STANDBY
-        async with self.create_at_simulator(
-            go_to_fault_state=False, simulator_state=state, send_state_event=False
-        ), self.create_cmd_evt_client(self.simulator, state, False):
-            assert self.simulator.simulator_state == state

@@ -99,10 +99,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         config_schema: dict[str, typing.Any],
         config_dir: str | pathlib.Path | None = None,
         check_if_duplicate: bool = False,
-        initial_state: salobj.State = salobj.State.STANDBY,
+        initial_state: sal_enums.State = sal_enums.State.STANDBY,
         override: str = "",
         simulation_mode: int = 0,
-        expect_any_at_state_event: bool = True,
     ) -> None:
         super().__init__(
             name=name,
@@ -134,8 +133,12 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         # AT state event to wait when starting.
         self.at_state_event = asyncio.Event()
 
+        # Event to indicate going to FAULT.
+        self.fault_event = asyncio.Event()
+
         # Keep track of the AT state for state transition commands.
         self.at_state = sal_enums.State.OFFLINE
+        self.at_connect_state = sal_enums.State.OFFLINE
 
         # Is a CSC state transition ongoing or not.
         self.state_transition_ongoing = False
@@ -143,9 +146,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         # At the start expect a state event from AT or not. This only should
         # be true when the cmd_evt client connects.
         self.expect_at_start_state_event = False
-
-        # Expect AT to send a state event or not.
-        self.expect_any_at_state_event = expect_any_at_state_event
 
         # Keep track of unrecognized telemetry topics.
         self.unrecognized_telemetry_topics: set[str] = set()
@@ -168,11 +168,17 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
     async def wait_cmd_done(self, command: CommonCommand) -> None:
         command_issued = await self.write_command(command=command)
+        fault_event_task = asyncio.create_task(self.fault_event.wait())
         try:
             async with asyncio.timeout(self.cmd_done_timeout):
-                await command_issued.done
+                await asyncio.wait(
+                    [command_issued.done, fault_event_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
         except TimeoutError:
             self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
+        if not fault_event_task.done():
+            fault_event_task.cancel()
 
     async def perform_common_part_of_state_transition(
         self,
@@ -180,17 +186,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         state: sal_enums.State,
         expected_states: list[sal_enums.State],
     ) -> None:
-        self.log.debug(
-            f"perform_common_part_of_state_transition: {self.expect_any_at_state_event=}"
-        )
-        if self.at_state in expected_states or not self.expect_any_at_state_event:
+        self.log.debug("perform_common_part_of_state_transition")
+        if self.at_state in expected_states:
             await self.wait_cmd_done(command)
-        elif self.at_state == state:
-            self.log.warning(
-                f"Server already in {state.name}. Not sending "
-                "command and proceeding with state transition."
-            )
         else:
+            self.log.error(f"Unexpectedly {self.at_state=}. Going FAULT.")
             await self.fault(
                 code=None, report=f"Server in unexpected state {self.at_state}."
             )
@@ -228,6 +228,12 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.state_transition_ongoing = False
+        if self.fault_event.is_set():
+            self.fault_event.clear()
+            await self.fault(
+                code=None,
+                report="The fault_event is set so going to FAULT.",
+            )
         self.log.debug(f"end_disable and {self.state_transition_ongoing=}.")
 
     async def begin_enable(self, data: salobj.BaseMsgType) -> None:
@@ -241,17 +247,36 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.state_transition_ongoing = True
         self.log.debug(f"begin_enable {self.summary_state=}, {self.at_state=}")
         await self.cmd_enable.ack_in_progress(data, self.cmd_done_timeout)
-        command = CommonCommand.ENABLE
-        if self.connected:
-            await self.perform_common_part_of_state_transition(
-                command=command,
-                state=sal_enums.State.ENABLED,
-                expected_states=[sal_enums.State.DISABLED],
-            )
-        else:
-            await self.fault(
-                code=None, report=f"Not connected so not sending the {command} command."
-            )
+
+        while self.summary_state not in [
+            sal_enums.State.ENABLED,
+            sal_enums.State.FAULT,
+        ]:
+            match self.at_state:
+                case sal_enums.State.FAULT:
+                    command = CommonCommand.STANDBY
+                    expected_states = [sal_enums.State.FAULT]
+                case sal_enums.State.STANDBY:
+                    command = CommonCommand.START
+                    expected_states = [sal_enums.State.STANDBY]
+                case sal_enums.State.DISABLED:
+                    command = CommonCommand.ENABLE
+                    expected_states = [sal_enums.State.DISABLED]
+                case _:
+                    # AT is ENABLED.
+                    return
+            if self.connected:
+                await self.perform_common_part_of_state_transition(
+                    command=command,
+                    state=sal_enums.State.ENABLED,
+                    expected_states=expected_states,
+                )
+            else:
+                await self.fault(
+                    code=None,
+                    report=f"Not connected so not sending the {command} command.",
+                )
+        self.log.debug(f"end begin_enable {self.summary_state=}, {self.at_state=}")
 
     async def end_enable(self, data: salobj.BaseMsgType) -> None:
         """End do_enable; called after state changes
@@ -263,7 +288,15 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.state_transition_ongoing = False
-        self.log.debug(f"end_enable and {self.state_transition_ongoing=}.")
+        if self.fault_event.is_set():
+            self.fault_event.clear()
+            await self.fault(
+                code=None,
+                report="The fault_event is set so going to FAULT.",
+            )
+        self.log.debug(
+            f"end_enable and {self.state_transition_ongoing=},  {self.summary_state=}, {self.at_state=}"
+        )
 
     async def begin_standby(self, data: salobj.BaseMsgType) -> None:
         """Begin do_standby; called before the state changes.
@@ -277,7 +310,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.log.debug(f"begin_standby {self.summary_state=}, {self.at_state=}")
         await self.cmd_standby.ack_in_progress(data, self.cmd_done_timeout)
         command = CommonCommand.STANDBY
-        if self.connected and self.summary_state != salobj.State.FAULT:
+        if self.connected and self.summary_state != sal_enums.State.FAULT:
             if self.at_state == sal_enums.State.ENABLED:
                 await self.fault(
                     code=None, report=f"Server in unexpected state {self.at_state}."
@@ -289,17 +322,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 state=sal_enums.State.STANDBY,
                 expected_states=[sal_enums.State.DISABLED],
             )
-            self.log.debug("Stopping telemetry task.")
-            await self._stop_telemetry_task_and_client()
-        elif self.connected and self.summary_state == salobj.State.FAULT:
-            if (
-                self.at_state in [sal_enums.State.FAULT, sal_enums.State.STANDBY]
-                or not self.expect_any_at_state_event
-            ):
-                try:
-                    await self.wait_cmd_done(command)
-                except RuntimeError:
-                    self.log.error("AT didn't go to STANDBY. Continuing.")
+            self.log.debug("Disconnecting.")
+            await self.stop_clients()
         else:
             await self.fault(
                 code=None, report=f"Not connected so not sending the {command} command."
@@ -327,36 +351,23 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Command data
         """
         self.state_transition_ongoing = True
-        self.log.debug(
-            f"end_start {self.summary_state=}, {self.at_state=}, {self.expect_any_at_state_event=}"
-        )
+        self.log.debug(f"end_start {self.summary_state=}, {self.at_state=}")
         await self.cmd_start.ack_in_progress(data, self.cmd_done_timeout)
         await self.start_clients()
         command = CommonCommand.START
 
         if self.connected:
-            if self.expect_any_at_state_event:
-                try:
-                    async with asyncio.timeout(AT_STATE_EVENT_WAIT_TIMEOUT):
-                        self.log.debug("Waiting for AT state event to be set.")
-                        await self.at_state_event.wait()
-                except TimeoutError:
-                    report = f"Not received AT state event after {AT_STATE_EVENT_WAIT_TIMEOUT} seconds."
-                    self.log.error(report)
-                    await self.fault(code=None, report=report)
-                    self.state_transition_ongoing = False
-                    return
-
-            if self.expect_any_at_state_event:
-                if (
-                    self.at_state in [sal_enums.State.STANDBY, sal_enums.State.OFFLINE]
-                    or not self.expect_any_at_state_event
-                ):
-                    await self.wait_cmd_done(command)
-                else:
-                    self.log.debug(
-                        f"Not sending {CommonCommand.START} to AT because {self.at_state=}."
-                    )
+            try:
+                async with asyncio.timeout(AT_STATE_EVENT_WAIT_TIMEOUT):
+                    self.log.debug("Waiting for AT state event to be set.")
+                    await self.at_state_event.wait()
+                    self.log.debug("AT state event was set.")
+            except TimeoutError:
+                report = f"Not received AT state event after {AT_STATE_EVENT_WAIT_TIMEOUT} seconds."
+                self.log.error(report)
+                await self.fault(code=None, report=report)
+                self.state_transition_ongoing = False
+                return
         else:
             await self.fault(
                 code=None, report=f"Not connected so not sending the {command} command."
@@ -371,7 +382,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         ----------
         code : `int`
             Error code for the ``errorCode`` event.
-            If `None` then ``errorCode`` is not output and you should
+            If `None` then ``errorCode`` is not output, and you should
             output it yourself. Specifying `None` is deprecated;
             please always specify an integer error code.
         report : `str`
@@ -380,7 +391,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             Description of the traceback, if any.
         """
         # Only disconnect the telemetry client but not the evt_cmd client.
-        await self._stop_telemetry_task_and_client()
+        await self.stop_clients()
         await super().fault(code, report, traceback)
 
     async def start_clients(self) -> None:
@@ -398,6 +409,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         telemetry_port = self.config.telemetry_port
 
         if self.simulation_mode == 1:
+            self.log.debug("Starting simulator.")
             assert self.simulator is not None
             await self.simulator.cmd_evt_server.start_task
             await self.simulator.telemetry_server.start_task
@@ -405,33 +417,26 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             cmd_evt_port = self.simulator.cmd_evt_server.port
             telemetry_port = self.simulator.telemetry_server.port
 
-        # Stop the clients in case the configuration has changed.
-        if self.cmd_evt_client.connected and (
-            self.cmd_evt_client.host != host or self.cmd_evt_client.port != cmd_evt_port
-        ):
-            await self._stop_cmd_evt_task_and_client()
-        if self.telemetry_client.connected and (
-            self.telemetry_client.host != host
-            or self.telemetry_client.port != telemetry_port
-        ):
-            await self._stop_telemetry_task_and_client()
+        # Do not call `await self.stop_clients()` here since that will stop
+        # the simulator as well.
+        self.log.debug("Stop the clients in case the configuration has changed.")
+        await self._stop_cmd_evt_task_and_client()
+        await self._stop_telemetry_task_and_client()
 
-        if not self.cmd_evt_client.connected:
-            self.log.debug("Starting cmd_evt client.")
-            self.cmd_evt_client = tcpip.Client(
-                host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
-            )
-            await self.cmd_evt_client.start_task
-            self._event_task = asyncio.create_task(self.cmd_evt_loop())
-            self.expect_at_start_state_event = True
+        self.log.debug("Starting cmd_evt client.")
+        self.expect_at_start_state_event = True
+        self.cmd_evt_client = tcpip.Client(
+            host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
+        )
+        await self.cmd_evt_client.start_task
+        self._event_task = asyncio.create_task(self.cmd_evt_loop())
 
-        if not self.telemetry_client.connected:
-            self.log.debug("Starting telemetry client.")
-            self.telemetry_client = tcpip.Client(
-                host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
-            )
-            await self.telemetry_client.start_task
-            self._telemetry_task = asyncio.create_task(self.telemetry_loop())
+        self.log.debug("Starting telemetry client.")
+        self.telemetry_client = tcpip.Client(
+            host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
+        )
+        await self.telemetry_client.start_task
+        self._telemetry_task = asyncio.create_task(self.telemetry_loop())
 
     async def _stop_cmd_evt_task_and_client(self) -> None:
         if not self._event_task.done():
@@ -444,6 +449,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         await self.telemetry_client.close()
 
     async def stop_clients(self) -> None:
+        self.log.debug("Stopping clients.")
         """Stop all clients and background tasks.
 
         If simulator_mode == 1 then the simulator gets stopped as well.
@@ -455,6 +461,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.debug("Closing simulator servers.")
             await self.simulator.telemetry_server.close()
             await self.simulator.cmd_evt_server.close()
+            self.simulator = None
 
     async def close_tasks(self) -> None:
         """Shut down pending tasks. Called by `close`.
@@ -500,6 +507,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 f"Received AT state {self.at_state.name}, CSC state is {self.summary_state.name}, "
                 f"{self.state_transition_ongoing=}, {self.expect_at_start_state_event=}."
             )
+            if self.expect_at_start_state_event:
+                self.at_connect_state = self.at_state
 
             if (
                 not self.state_transition_ongoing
@@ -516,17 +525,19 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             if self.expect_at_start_state_event:
                 self.expect_at_start_state_event = False
 
-            if self.at_state == sal_enums.State.FAULT:
+            if (
+                self.at_state == sal_enums.State.FAULT
+                and self.at_connect_state != sal_enums.State.FAULT
+            ):
                 self.log.debug(
                     f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
                 )
+                self.fault_event.set()
                 await self.fault(code=None, report="AT in FAULT state.")
             elif hasattr(self, "evt_crioSummaryState"):
                 kwargs = {key: value for key, value in data.items() if key != "id"}
                 self.log.debug(f"Sending evt_crioSummaryState with data {kwargs}.")
                 await self.evt_crioSummaryState.set_write(**kwargs)
-            else:
-                await self.call_set_write(data=data)
         else:
             await self.call_set_write(data=data)
 

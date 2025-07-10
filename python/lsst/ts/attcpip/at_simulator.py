@@ -53,9 +53,6 @@ class AtSimulator:
         The telemetry port.
     simulator_state : `sal_enums.State`
         The summary state to start with.
-    send_state_event : `bool`
-        Send the summary state event (True) or not (False). Unit tests can set
-        this to False to mock networking issues.
     """
 
     def __init__(
@@ -64,7 +61,6 @@ class AtSimulator:
         cmd_evt_port: int,
         telemetry_port: int,
         simulator_state: sal_enums.State = sal_enums.State.STANDBY,
-        send_state_event: bool = True,
     ) -> None:
         self.log = logging.getLogger(type(self).__name__)
         self.cmd_evt_server = AtServerSimulator(
@@ -95,9 +91,6 @@ class AtSimulator:
         # - disable: ENABLED -> DISABLED
         # - standby: DISABLED -> STANDBY
         self.simulator_state = simulator_state
-
-        # Send the summary state event or not.
-        self.send_state_event = send_state_event
 
         # Dict of command: function.
         self.dispatch_dict: dict[str, typing.Callable] = {
@@ -134,7 +127,7 @@ class AtSimulator:
             The server to which the client connected.
         """
         await self.cmd_evt_connect_callback(server)
-        if self.cmd_evt_server.connected and self.send_state_event:
+        if self.cmd_evt_server.connected:
             self.log.debug(
                 f"Sending {CommonEvent.SUMMARY_STATE.value} with {self.simulator_state=}"
             )
@@ -264,10 +257,9 @@ class AtSimulator:
             await self.fault()
         else:
             self.simulator_state = sal_enums.State.DISABLED
-            if self.send_state_event:
-                await self._write_evt(
-                    evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-                )
+            await self._write_evt(
+                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
+            )
         self.log.debug("End start.")
 
     async def disable(self, *, sequence_id: int) -> None:
@@ -281,10 +273,9 @@ class AtSimulator:
 
         await self.write_success_response(sequence_id=sequence_id)
         self.simulator_state = sal_enums.State.DISABLED
-        if self.send_state_event:
-            await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-            )
+        await self._write_evt(
+            evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
+        )
         self.log.debug("End disable.")
 
     async def enable(self, *, sequence_id: int) -> None:
@@ -296,10 +287,9 @@ class AtSimulator:
 
         await self.write_success_response(sequence_id=sequence_id)
         self.simulator_state = sal_enums.State.ENABLED
-        if self.send_state_event:
-            await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-            )
+        await self._write_evt(
+            evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
+        )
         self.log.debug("End enable.")
 
     async def standby(self, *, sequence_id: int) -> None:
@@ -312,9 +302,10 @@ class AtSimulator:
             await self.write_fail_response(sequence_id=sequence_id)
             return
 
-        await self.write_success_response(sequence_id=sequence_id)
         self.simulator_state = sal_enums.State.STANDBY
-        if self.send_state_event:
+
+        if self.cmd_evt_server.connected:
+            await self.write_success_response(sequence_id=sequence_id)
             await self._write_evt(
                 evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
             )
@@ -358,7 +349,12 @@ class AtSimulator:
             CommonCommandArgument.ID: response,
             CommonCommandArgument.SEQUENCE_ID: sequence_id,
         }
-        await self.cmd_evt_server.write_json(data=data)
+        try:
+            await self.cmd_evt_server.write_json(data=data)
+        except Exception:
+            self.log.warning(
+                f"Couldn't write {response=} for {sequence_id=}. Ignoring."
+            )
 
     async def write_ack_response(self, sequence_id: int) -> None:
         """Write an ``ACK`` response.
@@ -411,7 +407,10 @@ class AtSimulator:
             The data to include in the event message.
         """
         data: dict[str, typing.Any] = {CommonCommandArgument.ID: evt_id, **kwargs}
-        await self.cmd_evt_server.write_json(data=data)
+        try:
+            await self.cmd_evt_server.write_json(data=data)
+        except Exception:
+            self.log.warning(f"Couldn't write evt {data=}. Ignoring.")
 
     async def _write_telemetry(
         self, tel_id: str, data: typing.Any, timestamp: np.float64 | None = None
@@ -431,7 +430,10 @@ class AtSimulator:
             data.cRIO_timestamp = timestamp.item()
         data.id = tel_id
         data_dict = vars(data)
-        await self.telemetry_server.write_json(data=data_dict)
+        try:
+            await self.telemetry_server.write_json(data=data_dict)
+        except Exception:
+            self.log.warning(f"Couldn't write telemetry {data_dict=}. Ignoring.")
 
     async def __aenter__(self) -> AtSimulator:
         return self
