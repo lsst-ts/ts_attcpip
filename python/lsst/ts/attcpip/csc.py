@@ -392,6 +392,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         # Only disconnect the telemetry client but not the evt_cmd client.
         await self.stop_clients()
+        self.log.debug(f"Going to FAULT with {report=}.")
         await super().fault(code, report, traceback)
 
     async def start_clients(self) -> None:
@@ -441,19 +442,25 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     async def _stop_cmd_evt_task_and_client(self) -> None:
         if not self._event_task.done():
             self._event_task.cancel()
-        await self.cmd_evt_client.close()
+        try:
+            await self.cmd_evt_client.close()
+        except BaseException:
+            self.log.exception("Failed to stop cmd_evt client. Ignoring.")
 
     async def _stop_telemetry_task_and_client(self) -> None:
         if not self._telemetry_task.done():
             self._telemetry_task.cancel()
-        await self.telemetry_client.close()
+        try:
+            await self.telemetry_client.close()
+        except BaseException:
+            self.log.exception("Failed to stop telemetry client. Ignoring.")
 
     async def stop_clients(self) -> None:
-        self.log.debug("Stopping clients.")
         """Stop all clients and background tasks.
 
         If simulator_mode == 1 then the simulator gets stopped as well.
         """
+        self.log.debug("Stopping clients.")
         await self._stop_telemetry_task_and_client()
         await self._stop_cmd_evt_task_and_client()
 
@@ -478,7 +485,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         This loop waits for incoming command and event messages and processes
         them when they arrive.
         """
-        while True:
+        while self.connected:
             data = await self.cmd_evt_client.read_json()
             self.log.debug(f"Received cmd_evt {data=}")
             data_id: str = data[CommonCommandArgument.ID]

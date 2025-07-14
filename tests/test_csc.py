@@ -18,7 +18,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import asyncio
 import contextlib
 import os
 import pathlib
@@ -178,39 +178,72 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_complete_state_cycle_with_fault(self) -> None:
         """Test a complete state cycle with the AT server in different allowed
         start states but the AT server goes to FAULT."""
-        for at_state in [
-            sal_enums.State.STANDBY,
-            # sal_enums.State.FAULT,
-            # sal_enums.State.DISABLED,
-            # sal_enums.State.ENABLED,
-        ]:
-            async with (
-                self.create_csc_and_remote(),
-                self.create_at_simulator(
-                    go_to_fault_state=True, simulator_state=at_state
-                ),
-            ):
-                await self._validate_summary_state(sal_enums.State.STANDBY)
+        async with (
+            self.create_csc_and_remote(),
+            self.create_at_simulator(
+                go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY
+            ),
+        ):
+            await self._validate_summary_state(sal_enums.State.STANDBY)
 
-                data = salobj.BaseMsgType()
-                data.configurationOverride = ""
+            data = salobj.BaseMsgType()
+            data.configurationOverride = ""
 
-                # When the CSC starts, it will not progress the AT server
-                # state. It will connect to the AT server and receive the at
-                # server state so that can be verified.
-                await self.csc.do_start(data)
-                assert self.csc.summary_state == sal_enums.State.DISABLED
-                assert self.csc.at_state == at_state
-                await self._validate_summary_state(sal_enums.State.DISABLED)
-                await self._validate_crio_summary_state(at_state)
+            # When the CSC starts, it will not progress the AT server
+            # state. It will connect to the AT server and receive the at
+            # server state so that can be verified.
+            await self.csc.do_start(data)
+            assert self.csc.summary_state == sal_enums.State.DISABLED
+            assert self.csc.at_state == sal_enums.State.STANDBY
+            await self._validate_summary_state(sal_enums.State.DISABLED)
+            await self._validate_crio_summary_state(sal_enums.State.STANDBY)
 
-                # Now the AT server reports it is in FAULT state so the CSC
-                # should go to FAULT as well.
-                await self.csc.do_enable(data)
-                assert self.csc.summary_state == sal_enums.State.FAULT
-                assert self.csc.at_state == sal_enums.State.FAULT
-                await self._validate_summary_state(sal_enums.State.FAULT)
-                await self._validate_crio_summary_state(sal_enums.State.FAULT)
+            # Now the AT server reports it is in FAULT state so the CSC
+            # should go to FAULT as well.
+            await self.csc.do_enable(data)
+            assert self.csc.summary_state == sal_enums.State.FAULT
+            assert self.csc.at_state == sal_enums.State.FAULT
+            await self._validate_summary_state(sal_enums.State.FAULT)
+            await self._validate_crio_summary_state(sal_enums.State.FAULT)
+
+    async def test_complete_state_cycle_with_server_state_change(self) -> None:
+        """Test a complete state cycle with the AT server in an allowed start
+        but changing state unexpectedly. The CSC should go to FAULT."""
+        async with (
+            self.create_csc_and_remote(),
+            self.create_at_simulator(
+                go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY
+            ),
+        ):
+            await self._validate_summary_state(sal_enums.State.STANDBY)
+
+            data = salobj.BaseMsgType()
+            data.configurationOverride = ""
+
+            # When the CSC starts, it will not progress the AT server
+            # state. It will connect to the AT server and receive the at
+            # server state so that can be verified.
+            await self.csc.do_start(data)
+            assert self.csc.summary_state == sal_enums.State.DISABLED
+            assert self.csc.at_state == sal_enums.State.STANDBY
+            await self._validate_summary_state(sal_enums.State.DISABLED)
+            await self._validate_crio_summary_state(sal_enums.State.STANDBY)
+
+            # Now go to ENABLED which should go well.
+            await self.csc.do_enable(data)
+            assert self.csc.summary_state == sal_enums.State.ENABLED
+            assert self.csc.at_state == sal_enums.State.ENABLED
+            await self._validate_summary_state(sal_enums.State.ENABLED)
+            await self._validate_crio_summary_state(sal_enums.State.ENABLED)
+
+            # Now the simulator goes to DISABLED and the CSC should go to
+            # FAULT.
+            await self.simulator.disable(sequence_id=-1)
+            await asyncio.sleep(2.0)
+            assert self.csc.summary_state == sal_enums.State.FAULT
+            assert self.csc.at_state == sal_enums.State.DISABLED
+            await self._validate_summary_state(sal_enums.State.FAULT)
+            await self._validate_crio_summary_state(sal_enums.State.DISABLED)
 
     async def _validate_summary_state(self, summary_state: sal_enums.State) -> None:
         data = await self.remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
