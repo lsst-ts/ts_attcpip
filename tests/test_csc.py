@@ -18,7 +18,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import asyncio
 import contextlib
 import os
 import pathlib
@@ -67,231 +67,193 @@ TELEMETRY_PORT = 6000
 
 class CscTestCase(unittest.IsolatedAsyncioTestCase):
     @contextlib.asynccontextmanager
-    async def create_at_simulator(
-        self,
-        go_to_fault_state: bool,
-        simulator_state: sal_enums.State = sal_enums.State.STANDBY,
-        send_state_event: bool = True,
-    ) -> typing.AsyncGenerator[None, None]:
+    async def create_csc_and_remote(self) -> typing.AsyncGenerator[None, None]:
         os.environ["LSST_TOPIC_SUBNAME"] = "test_attcpip"
         os.environ["LSST_SITE"] = "test"
         os.environ["LSST_DDS_PARTITION_PREFIX"] = "test"
         attcpip.AtTcpipCsc.version = "UnitTest"
 
-        with (
-            mock.patch.object(salobj.Controller, "_assert_do_methods_present"),
-            mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"),
-        ):
-            async with attcpip.AtSimulator(
-                host=tcpip.LOCALHOST_IPV4,
-                cmd_evt_port=CMD_EVT_PORT,
-                telemetry_port=TELEMETRY_PORT,
-                simulator_state=simulator_state,
-                send_state_event=send_state_event,
-            ) as self.simulator:
-                self.simulator.go_to_fault_state = go_to_fault_state
-                await self.simulator.cmd_evt_server.start_task
-                await self.simulator.telemetry_server.start_task
-                yield
-
-    async def test_csc_without_fault_state(self) -> None:
-        """Test without the simulator going to FAULT state."""
-        async with (
-            self.create_at_simulator(go_to_fault_state=False),
-            attcpip.AtTcpipCsc(
-                name="Test",
-                index=0,
-                config_schema=CONFIG_SCHEMA,
-                config_dir=CONFIG_DIR,
-                initial_state=salobj.State.STANDBY,
-                simulation_mode=1,
-            ) as csc,
-            salobj.Remote(
-                domain=csc.domain,
-                name=csc.salinfo.name,
-                index=csc.salinfo.index,
-            ) as remote,
-        ):
-            data = await self.set_csc_simulator(csc, remote)
-
-            # Repeat to make sure that cmd_evt_client still is connected to the
-            # simulator after going to STANDBY.
-            for _ in range(2):
-                await self.perform_state_transitions(
-                    csc, remote, data, sal_enums.State.DISABLED
-                )
-
-                await csc.do_standby(data)
-                assert self.simulator.simulator_state == sal_enums.State.STANDBY
-                await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-                assert csc.cmd_evt_client.connected
-                assert not csc.telemetry_client.connected
-
-    async def test_csc_with_fault_state(self) -> None:
-        """Test with the simulator going to FAULT state."""
-        async with (
-            self.create_at_simulator(go_to_fault_state=True),
-            attcpip.AtTcpipCsc(
-                name="Test",
-                index=0,
-                config_schema=CONFIG_SCHEMA,
-                config_dir=CONFIG_DIR,
-                initial_state=salobj.State.STANDBY,
-                simulation_mode=1,
-            ) as csc,
-            salobj.Remote(
-                domain=csc.domain,
-                name=csc.salinfo.name,
-                index=csc.salinfo.index,
-            ) as remote,
-        ):
-            csc.simulator = self.simulator
-            data = salobj.BaseMsgType()
-            data.configurationOverride = ""
-            assert self.simulator.simulator_state == sal_enums.State.STANDBY
-            await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-
-            # Repeat to make sure that both cmd_evt_client and telemetry_client
-            # remain connected to the simulator all the time.
-            for _ in range(2):
-                await csc.do_start(data)
-                assert self.simulator.simulator_state == sal_enums.State.FAULT
-                await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-                await remote.evt_errorCode.next(flush=False, timeout=TIMEOUT)
-                assert csc.cmd_evt_client.connected
-                assert csc.telemetry_client.connected
-
-                await csc.do_standby(data)
-                assert self.simulator.simulator_state == sal_enums.State.STANDBY
-                await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-                assert csc.cmd_evt_client.connected
-                assert csc.telemetry_client.connected
-
-    async def test_csc_with_at_in_unexpected_but_acceptable_state(self) -> None:
-        for simulator_state in [
-            sal_enums.State.DISABLED,
-            sal_enums.State.ENABLED,
-        ]:
+        with mock.patch.object(salobj.Controller, "_assert_do_methods_present"):
             async with (
-                self.create_at_simulator(
-                    go_to_fault_state=False, simulator_state=simulator_state
-                ),
                 attcpip.AtTcpipCsc(
                     name="Test",
                     index=0,
                     config_schema=CONFIG_SCHEMA,
                     config_dir=CONFIG_DIR,
-                    initial_state=salobj.State.STANDBY,
+                    initial_state=sal_enums.State.STANDBY,
                     simulation_mode=1,
-                ) as csc,
+                ) as self.csc,
                 salobj.Remote(
-                    domain=csc.domain,
-                    name=csc.salinfo.name,
-                    index=csc.salinfo.index,
-                ) as remote,
+                    domain=self.csc.domain,
+                    name=self.csc.salinfo.name,
+                    index=self.csc.salinfo.index,
+                ) as self.remote,
             ):
-                data = await self.set_csc_simulator(csc, remote, simulator_state)
+                yield
 
-                await self.perform_state_transitions(csc, remote, data, simulator_state)
-
-    async def test_csc_with_at_in_unexpected_and_unacceptable_state(self) -> None:
-        async with (
-            self.create_at_simulator(go_to_fault_state=False),
-            attcpip.AtTcpipCsc(
-                name="Test",
-                index=0,
-                config_schema=CONFIG_SCHEMA,
-                config_dir=CONFIG_DIR,
-                initial_state=salobj.State.STANDBY,
-                simulation_mode=1,
-            ) as csc,
-            salobj.Remote(
-                domain=csc.domain,
-                name=csc.salinfo.name,
-                index=csc.salinfo.index,
-            ) as remote,
-        ):
-            data = await self.set_csc_simulator(csc, remote)
-
-            await csc.do_start(data)
-            assert self.simulator.simulator_state == sal_enums.State.DISABLED
-            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-            assert data.summaryState == sal_enums.State.DISABLED
-            assert csc.cmd_evt_client.connected
-            assert csc.telemetry_client.connected
-
-            await self.simulator.cmd_evt_dispatch_callback(
-                data={"id": "cmd_standby", "sequence_id": 10}
-            )
-            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-            assert data.summaryState == sal_enums.State.FAULT
-
-    async def test_not_receiving_summary_state_event(self) -> None:
-        simulator_state = sal_enums.State.STANDBY
-        async with (
-            self.create_at_simulator(
-                go_to_fault_state=False,
+    @contextlib.asynccontextmanager
+    async def create_at_simulator(
+        self,
+        go_to_fault_state: bool,
+        simulator_state: sal_enums.State = sal_enums.State.STANDBY,
+    ) -> typing.AsyncGenerator[None, None]:
+        with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
+            async with attcpip.AtSimulator(
+                host=tcpip.LOCALHOST_IPV4,
+                cmd_evt_port=CMD_EVT_PORT,
+                telemetry_port=TELEMETRY_PORT,
                 simulator_state=simulator_state,
-                send_state_event=False,
+            ) as self.simulator:
+                self.simulator.go_to_fault_state = go_to_fault_state
+                await self.simulator.cmd_evt_server.start_task
+                await self.simulator.telemetry_server.start_task
+
+                self.csc.simulator = self.simulator
+                assert self.simulator.simulator_state == simulator_state
+                assert not self.csc.cmd_evt_client.connected
+                assert not self.csc.telemetry_client.connected
+                yield
+
+    async def test_complete_state_cycle(self) -> None:
+        """Test a complete state cycle with the AT server in different allowed
+        start states."""
+        for at_state in [
+            sal_enums.State.STANDBY,
+            sal_enums.State.FAULT,
+            sal_enums.State.DISABLED,
+            sal_enums.State.ENABLED,
+        ]:
+            async with (
+                self.create_csc_and_remote(),
+                self.create_at_simulator(
+                    go_to_fault_state=False, simulator_state=at_state
+                ),
+            ):
+                await self._validate_summary_state(sal_enums.State.STANDBY)
+
+                data = salobj.BaseMsgType()
+                data.configurationOverride = ""
+
+                # When the CSC starts, it will not progress the AT server
+                # state. It will connect to the AT server and receive the at
+                # server state so that can be verified.
+                await self.csc.do_start(data)
+                assert self.csc.summary_state == sal_enums.State.DISABLED
+                assert self.csc.at_state == at_state
+                await self._validate_summary_state(sal_enums.State.DISABLED)
+                await self._validate_crio_summary_state(at_state)
+
+                # When the CSC goes to ENABLED, it should state transit the
+                # AT server until it is ENABLED. Depending on the start state
+                # the AT server will pass through various states, hence the
+                # ifs.
+                await self.csc.do_enable(data)
+                assert self.csc.summary_state == sal_enums.State.ENABLED
+                assert self.csc.at_state == sal_enums.State.ENABLED
+                await self._validate_summary_state(sal_enums.State.ENABLED)
+                if at_state == sal_enums.State.FAULT:
+                    await self._validate_crio_summary_state(sal_enums.State.STANDBY)
+                if at_state in [sal_enums.State.FAULT, sal_enums.State.STANDBY]:
+                    await self._validate_crio_summary_state(sal_enums.State.DISABLED)
+                if at_state in [
+                    sal_enums.State.FAULT,
+                    sal_enums.State.STANDBY,
+                    sal_enums.State.DISABLED,
+                ]:
+                    await self._validate_crio_summary_state(sal_enums.State.ENABLED)
+
+                # From here on the AT server should follow the CSC states.
+                await self.csc.do_disable(data)
+                assert self.csc.summary_state == sal_enums.State.DISABLED
+                assert self.csc.at_state == sal_enums.State.DISABLED
+                await self._validate_summary_state(sal_enums.State.DISABLED)
+                await self._validate_crio_summary_state(sal_enums.State.DISABLED)
+
+                await self.csc.do_standby(data)
+                assert self.csc.summary_state == sal_enums.State.STANDBY
+                assert self.csc.at_state == sal_enums.State.STANDBY
+                await self._validate_summary_state(sal_enums.State.STANDBY)
+                await self._validate_crio_summary_state(sal_enums.State.STANDBY)
+
+    async def test_complete_state_cycle_with_fault(self) -> None:
+        """Test a complete state cycle with the AT server in different allowed
+        start states but the AT server goes to FAULT."""
+        async with (
+            self.create_csc_and_remote(),
+            self.create_at_simulator(
+                go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY
             ),
-            attcpip.AtTcpipCsc(
-                name="Test",
-                index=0,
-                config_schema=CONFIG_SCHEMA,
-                config_dir=CONFIG_DIR,
-                initial_state=salobj.State.STANDBY,
-                simulation_mode=1,
-            ) as csc,
-            salobj.Remote(
-                domain=csc.domain,
-                name=csc.salinfo.name,
-                index=csc.salinfo.index,
-            ) as remote,
         ):
-            data = await self.set_csc_simulator(csc, remote, simulator_state)
+            await self._validate_summary_state(sal_enums.State.STANDBY)
 
-            await csc.do_start(data)
-            data = await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-            assert data.summaryState == sal_enums.State.FAULT
-            assert csc.cmd_evt_client.connected
-            assert csc.telemetry_client.connected
+            data = salobj.BaseMsgType()
+            data.configurationOverride = ""
 
-    async def set_csc_simulator(
-        self,
-        csc: attcpip.AtTcpipCsc,
-        remote: salobj.Remote,
-        expected_simulator_state: sal_enums.State = sal_enums.State.STANDBY,
-    ) -> salobj.BaseMsgType:
-        csc.simulator = self.simulator
-        data = salobj.BaseMsgType()
-        data.configurationOverride = ""
-        assert self.simulator.simulator_state == expected_simulator_state
-        await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-        assert not csc.cmd_evt_client.connected
-        assert not csc.telemetry_client.connected
-        return data
+            # When the CSC starts, it will not progress the AT server
+            # state. It will connect to the AT server and receive the at
+            # server state so that can be verified.
+            await self.csc.do_start(data)
+            assert self.csc.summary_state == sal_enums.State.DISABLED
+            assert self.csc.at_state == sal_enums.State.STANDBY
+            await self._validate_summary_state(sal_enums.State.DISABLED)
+            await self._validate_crio_summary_state(sal_enums.State.STANDBY)
 
-    async def perform_state_transitions(
-        self,
-        csc: attcpip.AtTcpipCsc,
-        remote: salobj.Remote,
-        data: salobj.BaseMsgType,
-        expected_simulator_state: sal_enums.State,
+            # Now the AT server reports it is in FAULT state so the CSC
+            # should go to FAULT as well.
+            await self.csc.do_enable(data)
+            assert self.csc.summary_state == sal_enums.State.FAULT
+            assert self.csc.at_state == sal_enums.State.FAULT
+            await self._validate_summary_state(sal_enums.State.FAULT)
+            await self._validate_crio_summary_state(sal_enums.State.FAULT)
+
+    async def test_complete_state_cycle_with_server_state_change(self) -> None:
+        """Test a complete state cycle with the AT server in an allowed start
+        but changing state unexpectedly. The CSC should go to FAULT."""
+        async with (
+            self.create_csc_and_remote(),
+            self.create_at_simulator(
+                go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY
+            ),
+        ):
+            await self._validate_summary_state(sal_enums.State.STANDBY)
+
+            data = salobj.BaseMsgType()
+            data.configurationOverride = ""
+
+            # When the CSC starts, it will not progress the AT server
+            # state. It will connect to the AT server and receive the at
+            # server state so that can be verified.
+            await self.csc.do_start(data)
+            assert self.csc.summary_state == sal_enums.State.DISABLED
+            assert self.csc.at_state == sal_enums.State.STANDBY
+            await self._validate_summary_state(sal_enums.State.DISABLED)
+            await self._validate_crio_summary_state(sal_enums.State.STANDBY)
+
+            # Now go to ENABLED which should go well.
+            await self.csc.do_enable(data)
+            assert self.csc.summary_state == sal_enums.State.ENABLED
+            assert self.csc.at_state == sal_enums.State.ENABLED
+            await self._validate_summary_state(sal_enums.State.ENABLED)
+            await self._validate_crio_summary_state(sal_enums.State.ENABLED)
+
+            # Now the simulator goes to DISABLED and the CSC should go to
+            # FAULT.
+            await self.simulator.disable(sequence_id=-1)
+            await asyncio.sleep(2.0)
+            assert self.csc.summary_state == sal_enums.State.FAULT
+            assert self.csc.at_state == sal_enums.State.DISABLED
+            await self._validate_summary_state(sal_enums.State.FAULT)
+            await self._validate_crio_summary_state(sal_enums.State.DISABLED)
+
+    async def _validate_summary_state(self, summary_state: sal_enums.State) -> None:
+        data = await self.remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
+        assert sal_enums.State(data.summaryState) == summary_state
+
+    async def _validate_crio_summary_state(
+        self, summary_state: sal_enums.State
     ) -> None:
-        await csc.do_start(data)
-        assert self.simulator.simulator_state == expected_simulator_state
-        await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-        assert csc.cmd_evt_client.connected
-        assert csc.telemetry_client.connected
-
-        await csc.do_enable(data)
-        assert self.simulator.simulator_state == sal_enums.State.ENABLED
-        await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-        assert csc.cmd_evt_client.connected
-        assert csc.telemetry_client.connected
-
-        await csc.do_disable(data)
-        assert self.simulator.simulator_state == sal_enums.State.DISABLED
-        await remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
-        assert csc.cmd_evt_client.connected
-        assert csc.telemetry_client.connected
+        if hasattr(self.csc, "evt_crioSummaryState"):
+            data = await self.remote.evt_crioSummaryState.next(
+                flush=False, timeout=TIMEOUT
+            )
+            assert sal_enums.State(data.summaryState) == summary_state
