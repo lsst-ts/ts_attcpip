@@ -8,6 +8,15 @@ Version History
 
 .. towncrier release notes start
 
+v0.1.14 (2025-07-23)
+====================
+
+Performance Enhancement
+-----------------------
+
+- Improved handling of unexpected AT states. (`OSW-313 <https://rubinobs.atlassian.net//browse/OSW-313>`_)
+- Added GitHub workflows. (`OSW-313 <https://rubinobs.atlassian.net//browse/OSW-313>`_)
+
 
 v0.1.13 (2025-04-29)
 ====================
