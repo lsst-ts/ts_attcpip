@@ -84,6 +84,6 @@ class AtServerSimulator(tcpip.OneClientReadLoopServer):
         try:
             data = await self.read_json()
             await self.dispatch_callback(data=data)
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, ConnectionResetError):
             # Ignore
             pass
