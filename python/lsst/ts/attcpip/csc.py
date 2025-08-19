@@ -560,8 +560,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     self.commands_issued[sequence_id].set_noack()
                 case Ack.SUCCESS:
                     self.commands_issued[sequence_id].set_success()
+                    del self.commands_issued[sequence_id]
                 case Ack.FAIL:
                     self.commands_issued[sequence_id].set_fail()
+                    del self.commands_issued[sequence_id]
                 case _:
                     raise RuntimeError(f"Received unexpected {response=}.")
         else:
