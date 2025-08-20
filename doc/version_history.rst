@@ -8,6 +8,15 @@ Version History
 
 .. towncrier release notes start
 
+v0.1.15 (2025-08-19)
+====================
+
+Bug Fixes
+---------
+
+- Deleted sequence ids from command_issued dictionary that were no longer needed to avoid unnecessary memory allocation. (`OSW-842 <https://rubinobs.atlassian.net//browse/OSW-842>`_)
+
+
 v0.1.14 (2025-07-23)
 ====================
 
