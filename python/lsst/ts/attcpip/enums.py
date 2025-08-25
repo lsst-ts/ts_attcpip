@@ -53,7 +53,6 @@ class CommonCommandArgument(enum.StrEnum):
     ID = "id"
     REASON = "reason"
     SEQUENCE_ID = "sequence_id"
-    VALUE = "value"
 
 
 class CommonEvent(enum.StrEnum):

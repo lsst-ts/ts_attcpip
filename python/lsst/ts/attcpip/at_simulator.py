@@ -37,7 +37,7 @@ from .at_server_simulator import AtServerSimulator
 from .enums import Ack, CommonCommand, CommonCommandArgument, CommonEvent
 from .schemas import load_schemas, registry
 
-CMD_ITEMS_TO_IGNORE = frozenset({CommonCommandArgument.ID, CommonCommandArgument.VALUE})
+CMD_ITEMS_TO_IGNORE = frozenset({CommonCommandArgument.ID})
 
 
 class AtSimulator:

@@ -681,9 +681,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         }
         for param in params:
             data[param] = params[param]
-        # TODO DM-39629 Remove this when it is not necessary anymore.
-        if len(params) == 0 and command not in STATE_COMMANDS:
-            data[CommonCommandArgument.VALUE] = True
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
         self.log.debug(f"Writing {data=}")
