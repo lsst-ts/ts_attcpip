@@ -249,7 +249,10 @@ class AtSimulator:
         if self.simulator_state not in [
             sal_enums.State.STANDBY,
         ]:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason=f"simulator state != STANDBY but {self.simulator_state.name}.",
+            )
             return
 
         await self.write_success_response(sequence_id=sequence_id)
@@ -268,7 +271,10 @@ class AtSimulator:
         if self.simulator_state not in [
             sal_enums.State.ENABLED,
         ]:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason=f"simulator state != ENABLED but {self.simulator_state.name}.",
+            )
             return
 
         await self.write_success_response(sequence_id=sequence_id)
@@ -282,7 +288,11 @@ class AtSimulator:
         """Switch to sal_enums.State.ENABLED."""
         self.log.debug("Begin enable.")
         if self.simulator_state != sal_enums.State.DISABLED:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason=f"simulator state != DISABLED but {self.simulator_state.name}.",
+            )
+
             return
 
         await self.write_success_response(sequence_id=sequence_id)
@@ -299,7 +309,11 @@ class AtSimulator:
             sal_enums.State.FAULT,
             sal_enums.State.DISABLED,
         ]:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason=f"simulator state != FAULT or DISABLED but {self.simulator_state.name}.",
+            )
+
             return
 
         self.simulator_state = sal_enums.State.STANDBY
@@ -366,15 +380,26 @@ class AtSimulator:
         """
         await self._write_command_response(Ack.ACK, sequence_id)
 
-    async def write_fail_response(self, sequence_id: int) -> None:
+    async def write_fail_response(self, sequence_id: int, reason: str) -> None:
         """Write a ``FAIL`` response.
 
         Parameters
         ----------
         sequence_id : `int`
             The command sequence id.
+        reason : `str`
+            The reason why the command failed.
         """
         await self._write_command_response(Ack.FAIL, sequence_id)
+        data = {
+            CommonCommandArgument.ID: Ack.FAIL_REASON,
+            CommonCommandArgument.SEQUENCE_ID: sequence_id,
+            CommonCommandArgument.REASON: reason,
+        }
+        try:
+            await self.cmd_evt_server.write_json(data=data)
+        except Exception:
+            self.log.warning(f"Couldn't write {reason=} for {sequence_id=}. Ignoring.")
 
     async def write_noack_response(self, sequence_id: int) -> None:
         """Write a ``NOACK`` response.

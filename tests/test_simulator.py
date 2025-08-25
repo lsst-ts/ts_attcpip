@@ -96,6 +96,13 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         assert data[attcpip.CommonCommandArgument.ID] == ack
         assert data[attcpip.CommonCommandArgument.SEQUENCE_ID] == sequence_id
 
+    async def verify_command_fail_reason(self, sequence_id: int) -> None:
+        data = await self.cmd_evt_client.read_json()
+        assert attcpip.CommonCommandArgument.ID in data
+        assert attcpip.CommonCommandArgument.SEQUENCE_ID in data
+        assert data[attcpip.CommonCommandArgument.ID] == attcpip.Ack.FAIL_REASON
+        assert data[attcpip.CommonCommandArgument.SEQUENCE_ID] == sequence_id
+
     async def verify_summary_state_event(self, state: sal_enums.State) -> None:
         data = await self.cmd_evt_client.read_json()
         assert attcpip.CommonCommandArgument.ID in data
@@ -137,6 +144,11 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id
             )
             await self.verify_summary_state_event(state=expected_state)
+        else:
+            await self.verify_command_response(
+                ack=attcpip.Ack.FAIL, sequence_id=self.sequence_id
+            )
+            await self.verify_command_fail_reason(sequence_id=self.sequence_id)
 
         assert self.simulator.simulator_state == expected_state
 

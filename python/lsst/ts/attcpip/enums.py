@@ -35,6 +35,7 @@ class Ack(enum.StrEnum):
     FAIL = "fail"
     NOACK = "noack"
     SUCCESS = "success"
+    FAIL_REASON = "failReason"
 
 
 class CommonCommand(enum.StrEnum):
@@ -50,6 +51,7 @@ class CommonCommandArgument(enum.StrEnum):
     """Enum containing all common command arguments."""
 
     ID = "id"
+    REASON = "reason"
     SEQUENCE_ID = "sequence_id"
     VALUE = "value"
 

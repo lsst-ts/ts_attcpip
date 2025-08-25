@@ -129,6 +129,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         # Keep track of the issued commands.
         self.commands_issued: dict[int, CommandIssued] = dict()
         self.cmd_done_timeout = CMD_DONE_TIMEOUT
+        self._commands_cleanup_task: asyncio.Future = utils.make_done_future()
 
         # AT state event to wait when starting.
         self.at_state_event = asyncio.Event()
@@ -420,7 +421,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         # Do not call `await self.stop_clients()` here since that will stop
         # the simulator as well.
-        self.log.debug("Stop the clients in case the configuration has changed.")
+        self.log.debug(
+            "Stop the clients and tasks in case the configuration has changed."
+        )
+        await self._stop_commands_cleanup_task()
         await self._stop_cmd_evt_task_and_client()
         await self._stop_telemetry_task_and_client()
 
@@ -439,6 +443,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         await self.telemetry_client.start_task
         self._telemetry_task = asyncio.create_task(self.telemetry_loop())
 
+        self.log.debug("Starting commands cleanup task.")
+        await self._start_commands_cleanup_task()
+
     async def _stop_cmd_evt_task_and_client(self) -> None:
         if not self._event_task.done():
             self._event_task.cancel()
@@ -455,6 +462,37 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         except BaseException:
             self.log.exception("Failed to stop telemetry client. Ignoring.")
 
+    async def _start_commands_cleanup_task(self) -> None:
+        self._commands_cleanup_task = asyncio.create_task(self._cleanup_commands())
+
+    async def _cleanup_commands(self) -> None:
+        while True:
+            self.log.debug("Checking for pending commands.")
+            now = utils.current_tai()
+            sequence_ids_to_remove: list[int] = []
+            for sequence_id in self.commands_issued:
+                command_issued = self.commands_issued[sequence_id]
+                if now - command_issued.timestamp > CMD_DONE_TIMEOUT:
+                    sequence_ids_to_remove.append(sequence_id)
+
+            if len(sequence_ids_to_remove) > 0:
+                self.log.warning(
+                    f"Setting the commands with the following sequence_ids to FAIL: {sequence_ids_to_remove}"
+                )
+                for sequence_id in sequence_ids_to_remove:
+                    command_issued = self.commands_issued[sequence_id]
+                    command_issued.set_fail("No fail reason received.")
+                    self.commands_issued.pop(sequence_id)
+
+            await asyncio.sleep(CMD_DONE_TIMEOUT)
+
+    async def _stop_commands_cleanup_task(self) -> None:
+        if not self._commands_cleanup_task.done():
+            try:
+                self._commands_cleanup_task.cancel()
+            except BaseException:
+                self.log.exception("Failed to stop commands cleanup task. Ignoring.")
+
     async def stop_clients(self) -> None:
         """Stop all clients and background tasks.
 
@@ -463,6 +501,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.log.debug("Stopping clients.")
         await self._stop_telemetry_task_and_client()
         await self._stop_cmd_evt_task_and_client()
+        await self._stop_commands_cleanup_task()
 
         if self.simulator is not None:
             self.log.debug("Closing simulator servers.")
@@ -486,7 +525,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         them when they arrive.
         """
         while self.connected:
-            data = await self.cmd_evt_client.read_json()
+            try:
+                data = await self.cmd_evt_client.read_json()
+            except asyncio.IncompleteReadError:
+                # Ignore.
+                data = {CommonCommandArgument.ID: "None"}
             self.log.debug(f"Received cmd_evt {data=}")
             data_id: str = data[CommonCommandArgument.ID]
 
@@ -558,11 +601,16 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     self.commands_issued[sequence_id].set_ack()
                 case Ack.NOACK:
                     self.commands_issued[sequence_id].set_noack()
+                    del self.commands_issued[sequence_id]
                 case Ack.SUCCESS:
                     self.commands_issued[sequence_id].set_success()
                     del self.commands_issued[sequence_id]
                 case Ack.FAIL:
-                    self.commands_issued[sequence_id].set_fail()
+                    # Do nothing because a fail reason will come.
+                    pass
+                case Ack.FAIL_REASON:
+                    reason = data[CommonCommandArgument.REASON]
+                    self.commands_issued[sequence_id].set_fail(reason=reason)
                     del self.commands_issued[sequence_id]
                 case _:
                     raise RuntimeError(f"Received unexpected {response=}.")
@@ -578,7 +626,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         they arrive.
         """
         while True:
-            data = await self.telemetry_client.read_json()
+            try:
+                data = await self.telemetry_client.read_json()
+            except asyncio.IncompleteReadError:
+                # Ignore.
+                data = {CommonCommandArgument.ID: "None"}
             data_id = ""
             try:
                 data_id = data[CommonCommandArgument.ID]
