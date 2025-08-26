@@ -683,7 +683,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             data[param] = params[param]
         command_issued = CommandIssued(name=command)
         self.commands_issued[sequence_id] = command_issued
-        self.log.debug(f"Writing {data=}")
+
+        # Avoid logging all "trackTarget" commands on INFO level because it is
+        # issued at a high frequency.
+        if "trackTarget" in command:
+            self.log.debug(f"Writing command {data=}")
+        else:
+            self.log.info(f"Writing command {data=}")
         async with asyncio.timeout(WAIT_TIMEOUT):
             await self.cmd_evt_client.write_json(data)
         return command_issued
