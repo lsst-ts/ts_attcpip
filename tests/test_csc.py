@@ -268,3 +268,4 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 flush=False, timeout=TIMEOUT
             )
             assert sal_enums.State(data.summaryState) == summary_state
+        assert self.csc.at_state_event.is_set()

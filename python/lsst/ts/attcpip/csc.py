@@ -167,29 +167,51 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     def connected(self) -> bool:
         return self.cmd_evt_client.connected
 
-    async def wait_cmd_done(self, command: CommonCommand) -> None:
-        command_issued = await self.write_command(command=command)
+    async def wait_fututre_done_or_fault(self, future: asyncio.Future) -> None:
+        """Wait for either the future to be done or for the CSC to go to
+        FAULT, whichever comes first."""
         fault_event_task = asyncio.create_task(self.fault_event.wait())
         try:
             async with asyncio.timeout(self.cmd_done_timeout):
                 await asyncio.wait(
-                    [command_issued.done, fault_event_task],
-                    return_when=asyncio.FIRST_COMPLETED,
+                    [future, fault_event_task], return_when=asyncio.FIRST_COMPLETED
                 )
         except TimeoutError:
-            self.log.warning(f"Timeout waiting for {command=}. Ignoring.")
-        if not fault_event_task.done():
-            fault_event_task.cancel()
+            self.log.warning(f"Timeout waiting for {future=}. Ignoring.")
+        finally:
+            if not fault_event_task.done():
+                fault_event_task.cancel()
+
+    async def wait_cmd_done(self, command: CommonCommand) -> None:
+        """Write a command and wait for it to be reported as Done or Fail by
+        AT."""
+        command_issued = await self.write_command(command=command)
+        await self.wait_fututre_done_or_fault(future=command_issued.done)
 
     async def perform_common_part_of_state_transition(
         self,
         command: CommonCommand,
-        state: sal_enums.State,
         expected_states: list[sal_enums.State],
     ) -> None:
+        """Utility method to perform the common part of any state transition.
+
+        State-specific code is executed in the specific `being_xxx` and
+        `end_xxx` methods.
+
+        Parameters
+        ----------
+        command : `CommonCommand`
+            The command to be executed.
+        expected_states : `list`[`sal_enums.State`]
+            List of states AT is expected to be in.
+        """
         self.log.debug("perform_common_part_of_state_transition")
         if self.at_state in expected_states:
+            self.at_state_event.clear()
             await self.wait_cmd_done(command)
+
+            at_state_event_task = asyncio.create_task(self.at_state_event.wait())
+            await self.wait_fututre_done_or_fault(future=at_state_event_task)
         else:
             self.log.error(f"Unexpectedly {self.at_state=}. Going FAULT.")
             await self.fault(
@@ -211,7 +233,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         if self.connected:
             await self.perform_common_part_of_state_transition(
                 command=command,
-                state=sal_enums.State.DISABLED,
                 expected_states=[sal_enums.State.STANDBY, sal_enums.State.ENABLED],
             )
         else:
@@ -269,7 +290,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             if self.connected:
                 await self.perform_common_part_of_state_transition(
                     command=command,
-                    state=sal_enums.State.ENABLED,
                     expected_states=expected_states,
                 )
             else:
@@ -320,7 +340,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
             await self.perform_common_part_of_state_transition(
                 command=command,
-                state=sal_enums.State.STANDBY,
                 expected_states=[sal_enums.State.DISABLED],
             )
             self.log.debug("Disconnecting.")
@@ -358,23 +377,33 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         command = CommonCommand.START
 
         if self.connected:
-            try:
-                async with asyncio.timeout(AT_STATE_EVENT_WAIT_TIMEOUT):
-                    self.log.debug("Waiting for AT state event to be set.")
-                    await self.at_state_event.wait()
-                    self.log.debug("AT state event was set.")
-            except TimeoutError:
-                report = f"Not received AT state event after {AT_STATE_EVENT_WAIT_TIMEOUT} seconds."
-                self.log.error(report)
-                await self.fault(code=None, report=report)
-                self.state_transition_ongoing = False
-                return
+            await self.await_at_state_event()
         else:
             await self.fault(
                 code=None, report=f"Not connected so not sending the {command} command."
             )
         self.state_transition_ongoing = False
         self.log.debug(f"end_start and {self.state_transition_ongoing=}.")
+
+    async def await_at_state_event(self) -> None:
+        """Wait for AT to report its state.
+
+        Raises
+        ------
+        RuntimeError
+            In case no event is received within the timeout period.
+        """
+        try:
+            async with asyncio.timeout(AT_STATE_EVENT_WAIT_TIMEOUT):
+                self.log.debug("Waiting for AT state event to be set.")
+                await self.at_state_event.wait()
+                self.log.debug("AT state event was set.")
+        except TimeoutError:
+            report = f"Not received AT state event after {AT_STATE_EVENT_WAIT_TIMEOUT} seconds."
+            self.log.error(report)
+            await self.fault(code=None, report=report)
+            self.state_transition_ongoing = False
+            raise RuntimeError("Going to FAULT.")
 
     async def fault(self, code: int | None, report: str, traceback: str = "") -> None:
         """Enter the fault state and output the ``errorCode`` event.
@@ -551,6 +580,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         except ValueError:
             pass
         if state_evt == CommonEvent.SUMMARY_STATE:
+            self.log.debug("WOUTER setting at_state_event.")
             self.at_state_event.set()
             self.at_state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
             self.log.debug(
@@ -618,7 +648,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 case _:
                     raise RuntimeError(f"Received unexpected {response=}.")
         else:
-            self.log.warning(
+            self.log.debug(
                 f"Received command response for unknown {sequence_id=}. Ignoring."
             )
 
