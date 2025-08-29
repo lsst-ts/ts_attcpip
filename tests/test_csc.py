@@ -99,6 +99,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         self,
         go_to_fault_state: bool,
         simulator_state: sal_enums.State = sal_enums.State.STANDBY,
+        send_fail_reason: bool = True,
     ) -> typing.AsyncGenerator[None, None]:
         with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
             async with attcpip.AtSimulator(
@@ -106,6 +107,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 cmd_evt_port=CMD_EVT_PORT,
                 telemetry_port=TELEMETRY_PORT,
                 simulator_state=simulator_state,
+                send_fail_reason=send_fail_reason,
             ) as self.simulator:
                 self.simulator.go_to_fault_state = go_to_fault_state
                 await self.simulator.cmd_evt_server.start_task
@@ -226,16 +228,23 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_go_to_enabled_with_fail(self) -> None:
         """Test going to ENABLED and then going to ENABLED again which should
         result in a FAIL."""
-        async with (
-            self.create_csc_and_remote(),
-            self.create_at_simulator(
-                go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY
-            ),
-        ):
+        for send_fail_reason in [True, False]:
+            async with (
+                self.create_csc_and_remote(),
+                self.create_at_simulator(
+                    go_to_fault_state=False,
+                    simulator_state=sal_enums.State.STANDBY,
+                    send_fail_reason=send_fail_reason,
+                ),
+            ):
 
-            await self._go_from_standby_to_enabled()
+                await self._go_from_standby_to_enabled()
 
-            await self.csc.wait_cmd_done(attcpip.CommonCommand.ENABLE)
+                await self.csc.wait_cmd_done(attcpip.CommonCommand.ENABLE)
+                if send_fail_reason:
+                    assert self.csc.fail_reason_event.is_set()
+                else:
+                    assert not self.csc.fail_reason_event.is_set()
 
     async def _go_from_standby_to_enabled(self) -> None:
         await self._validate_summary_state(sal_enums.State.STANDBY)

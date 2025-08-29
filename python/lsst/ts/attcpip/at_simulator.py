@@ -53,6 +53,9 @@ class AtSimulator:
         The telemetry port.
     simulator_state : `sal_enums.State`
         The summary state to start with.
+    send_fail_reason : `bool`
+        Send a fail reason for failed commands or not. Defaults to True. Unit
+        tests may set this to False.
     """
 
     def __init__(
@@ -61,6 +64,7 @@ class AtSimulator:
         cmd_evt_port: int,
         telemetry_port: int,
         simulator_state: sal_enums.State = sal_enums.State.STANDBY,
+        send_fail_reason: bool = True,
     ) -> None:
         self.log = logging.getLogger(type(self).__name__)
         self.cmd_evt_server = AtServerSimulator(
@@ -102,6 +106,9 @@ class AtSimulator:
 
         # Go to FAULT state when receiving the "start" command or not.
         self.go_to_fault_state = False
+
+        # Send a fail reason for failed commands or not.
+        self.send_fail_reason = send_fail_reason
 
         self.load_schemas()
 
@@ -399,16 +406,19 @@ class AtSimulator:
             Details of the error.
         """
         await self._write_command_response(Ack.FAIL, sequence_id)
-        data = {
-            CommonCommandArgument.ID: Ack.FAIL_REASON,
-            CommonCommandArgument.SEQUENCE_ID: sequence_id,
-            CommonCommandArgument.REASON: reason,
-            CommonCommandArgument.ERROR_DETAILS: error_details,
-        }
-        try:
-            await self.cmd_evt_server.write_json(data=data)
-        except Exception:
-            self.log.warning(f"Couldn't write {reason=} for {sequence_id=}. Ignoring.")
+        if self.send_fail_reason:
+            data = {
+                CommonCommandArgument.ID: Ack.FAIL_REASON,
+                CommonCommandArgument.SEQUENCE_ID: sequence_id,
+                CommonCommandArgument.REASON: reason,
+                CommonCommandArgument.ERROR_DETAILS: error_details,
+            }
+            try:
+                await self.cmd_evt_server.write_json(data=data)
+            except Exception:
+                self.log.warning(
+                    f"Couldn't write {reason=} for {sequence_id=}. Ignoring."
+                )
 
     async def write_noack_response(self, sequence_id: int) -> None:
         """Write a ``NOACK`` response.

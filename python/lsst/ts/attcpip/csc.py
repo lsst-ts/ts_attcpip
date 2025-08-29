@@ -45,6 +45,9 @@ STATE_COMMANDS = [cmd.value for cmd in CommonCommand]
 # Timeout [s] for wait operations.
 WAIT_TIMEOUT = 1.0
 
+# Timeout [s] for receiving a fail reason.
+FAIL_REASON_TIMEOUT = 1.0
+
 # Timeout [s] for receivng an AT state event.
 AT_STATE_EVENT_WAIT_TIMEOUT = 5.0
 
@@ -136,6 +139,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         # Event to indicate going to FAULT.
         self.fault_event = asyncio.Event()
+
+        # Event to indicate that a fail reason has arrived.
+        self.fail_reason_event = asyncio.Event()
 
         # Keep track of the AT state for state transition commands.
         self.at_state = sal_enums.State.OFFLINE
@@ -377,33 +383,24 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         command = CommonCommand.START
 
         if self.connected:
-            await self.await_at_state_event()
+            try:
+                async with asyncio.timeout(AT_STATE_EVENT_WAIT_TIMEOUT):
+                    self.log.debug("Waiting for AT state event to be set.")
+                    await self.at_state_event.wait()
+                    self.log.debug("AT state event was set.")
+            except TimeoutError:
+                report = f"Not received AT state event after {AT_STATE_EVENT_WAIT_TIMEOUT} seconds."
+                self.log.error(report)
+                await self.fault(code=None, report=report)
+                self.state_transition_ongoing = False
+                raise RuntimeError("Going to FAULT.")
+                return
         else:
             await self.fault(
                 code=None, report=f"Not connected so not sending the {command} command."
             )
         self.state_transition_ongoing = False
         self.log.debug(f"end_start and {self.state_transition_ongoing=}.")
-
-    async def await_at_state_event(self) -> None:
-        """Wait for AT to report its state.
-
-        Raises
-        ------
-        RuntimeError
-            In case no event is received within the timeout period.
-        """
-        try:
-            async with asyncio.timeout(AT_STATE_EVENT_WAIT_TIMEOUT):
-                self.log.debug("Waiting for AT state event to be set.")
-                await self.at_state_event.wait()
-                self.log.debug("AT state event was set.")
-        except TimeoutError:
-            report = f"Not received AT state event after {AT_STATE_EVENT_WAIT_TIMEOUT} seconds."
-            self.log.error(report)
-            await self.fault(code=None, report=report)
-            self.state_transition_ongoing = False
-            raise RuntimeError("Going to FAULT.")
 
     async def fault(self, code: int | None, report: str, traceback: str = "") -> None:
         """Enter the fault state and output the ``errorCode`` event.
@@ -636,13 +633,16 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     self.commands_issued[sequence_id].set_success()
                     del self.commands_issued[sequence_id]
                 case Ack.FAIL:
-                    # Do nothing because a fail reason will come.
-                    pass
+                    self.fail_reason_event.clear()
+                    asyncio.create_task(self.wait_fail_reason_event(sequence_id))
                 case Ack.FAIL_REASON:
+                    self.fail_reason_event.set()
                     reason = data[CommonCommandArgument.REASON]
                     error_details = data[CommonCommandArgument.ERROR_DETAILS]
                     if error_details:
-                        reason += f": {error_details}"
+                        reason += f": {error_details}."
+                    else:
+                        reason += "."
                     self.commands_issued[sequence_id].set_fail(reason=reason)
                     del self.commands_issued[sequence_id]
                 case _:
@@ -651,6 +651,17 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.debug(
                 f"Received command response for unknown {sequence_id=}. Ignoring."
             )
+
+    async def wait_fail_reason_event(self, sequence_id: int) -> None:
+        try:
+            async with asyncio.timeout(FAIL_REASON_TIMEOUT):
+                await self.fail_reason_event.wait()
+        except TimeoutError:
+            self.log.warning(
+                f"No failReason received for {sequence_id=}. Setting command to FAIL."
+            )
+            self.commands_issued[sequence_id].set_fail(reason="No reason provided.")
+            del self.commands_issued[sequence_id]
 
     async def telemetry_loop(self) -> None:
         """Execute the telemetry loop.
