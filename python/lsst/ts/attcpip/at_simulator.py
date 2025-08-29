@@ -251,7 +251,8 @@ class AtSimulator:
         ]:
             await self.write_fail_response(
                 sequence_id=sequence_id,
-                reason=f"simulator state != STANDBY but {self.simulator_state.name}.",
+                reason="Command start failed",
+                error_details=f"simulator state != STANDBY but {self.simulator_state.name}.",
             )
             return
 
@@ -273,7 +274,8 @@ class AtSimulator:
         ]:
             await self.write_fail_response(
                 sequence_id=sequence_id,
-                reason=f"simulator state != ENABLED but {self.simulator_state.name}.",
+                reason="Command disable failed",
+                error_details=f"simulator state != ENABLED but {self.simulator_state.name}.",
             )
             return
 
@@ -290,7 +292,8 @@ class AtSimulator:
         if self.simulator_state != sal_enums.State.DISABLED:
             await self.write_fail_response(
                 sequence_id=sequence_id,
-                reason=f"simulator state != DISABLED but {self.simulator_state.name}.",
+                reason="Command enable failed",
+                error_details=f"simulator state != DISABLED but {self.simulator_state.name}.",
             )
 
             return
@@ -311,7 +314,8 @@ class AtSimulator:
         ]:
             await self.write_fail_response(
                 sequence_id=sequence_id,
-                reason=f"simulator state != FAULT or DISABLED but {self.simulator_state.name}.",
+                reason="Command standby failed",
+                error_details=f"simulator state != FAULT or DISABLED but {self.simulator_state.name}.",
             )
 
             return
@@ -380,7 +384,9 @@ class AtSimulator:
         """
         await self._write_command_response(Ack.ACK, sequence_id)
 
-    async def write_fail_response(self, sequence_id: int, reason: str) -> None:
+    async def write_fail_response(
+        self, sequence_id: int, reason: str, error_details: str
+    ) -> None:
         """Write a ``FAIL`` response.
 
         Parameters
@@ -389,12 +395,15 @@ class AtSimulator:
             The command sequence id.
         reason : `str`
             The reason why the command failed.
+        error_details : `str`
+            Details of the error.
         """
         await self._write_command_response(Ack.FAIL, sequence_id)
         data = {
             CommonCommandArgument.ID: Ack.FAIL_REASON,
             CommonCommandArgument.SEQUENCE_ID: sequence_id,
             CommonCommandArgument.REASON: reason,
+            CommonCommandArgument.ERROR_DETAILS: error_details,
         }
         try:
             await self.cmd_evt_server.write_json(data=data)

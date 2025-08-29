@@ -12,12 +12,17 @@
     "reason": {
       "type": "string",
       "description": "The reason why the command failed."
+    },
+    "errorDetails": {
+      "type": "string",
+      "description": "Details of the error."
     }
   },
   "required": [
     "id",
     "sequence_id",
-    "reason"
+    "reason",
+    "errorDetails"
   ],
   "additionalProperties": false
 }

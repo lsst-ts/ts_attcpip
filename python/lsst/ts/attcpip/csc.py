@@ -610,6 +610,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     pass
                 case Ack.FAIL_REASON:
                     reason = data[CommonCommandArgument.REASON]
+                    error_details = data[CommonCommandArgument.ERROR_DETAILS]
+                    if error_details:
+                        reason += f": {error_details}"
                     self.commands_issued[sequence_id].set_fail(reason=reason)
                     del self.commands_issued[sequence_id]
                 case _:

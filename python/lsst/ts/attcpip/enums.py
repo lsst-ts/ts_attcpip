@@ -50,6 +50,7 @@ class CommonCommand(enum.StrEnum):
 class CommonCommandArgument(enum.StrEnum):
     """Enum containing all common command arguments."""
 
+    ERROR_DETAILS = "errorDetails"
     ID = "id"
     REASON = "reason"
     SEQUENCE_ID = "sequence_id"
