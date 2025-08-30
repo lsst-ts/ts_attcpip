@@ -581,10 +581,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         except ValueError:
             pass
         if state_evt == CommonEvent.SUMMARY_STATE:
-            self.log.debug("WOUTER setting at_state_event.")
             self.at_state_event.set()
             self.at_state = sal_enums.State(data[CommonEventArgument.SUMMARY_STATE])
-            self.log.debug(
+            self.log.info(
                 f"Received AT state {self.at_state.name}, CSC state is {self.summary_state.name}, "
                 f"{self.state_transition_ongoing=}, {self.expect_at_start_state_event=}."
             )
@@ -601,7 +600,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     f"Unexpectedly received AT state event with id={data['id']} "
                     f"and state={sal_enums.State(data['summaryState']).name}."
                 )
-                self.log.error(message)
                 await self.fault(code=None, report=message)
             if self.expect_at_start_state_event:
                 self.expect_at_start_state_event = False
@@ -610,9 +608,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 self.at_state == sal_enums.State.FAULT
                 and self.at_connect_state != sal_enums.State.FAULT
             ):
-                self.log.debug(
-                    f"Received FAULT state. Going to FAULT now from {self.summary_state.name}."
-                )
                 self.fault_event.set()
                 await self.fault(code=None, report="AT in FAULT state.")
             elif hasattr(self, "evt_crioSummaryState"):
@@ -769,4 +764,4 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             if name.startswith("evt_") and not send_failure:
                 self.log.debug(f"Done sending {name=} with {kwargs=}")
         else:
-            self.log.error(f"{name=} not found. Ignoring.")
+            self.log.warning(f"{name=} not found. Ignoring.")
