@@ -18,6 +18,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import asyncio
 import contextlib
 import os
@@ -28,7 +29,8 @@ from unittest import mock
 
 import yaml
 from lsst.ts import attcpip, salobj, tcpip
-from lsst.ts.xml import sal_enums
+from lsst.ts.salobj.delete_topics import DeleteTopics, DeleteTopicsArgs
+from lsst.ts.xml import sal_enums, subsystems
 
 CONFIG_DIR = pathlib.Path(__file__).parent / "data" / "config"
 CONFIG_SCHEMA = yaml.safe_load(
@@ -69,6 +71,30 @@ DATA.configurationOverride = ""
 
 
 class CscTestCase(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self) -> None:
+        """Runs after each test is completed.
+
+        This will delete all the topics and schema from the
+        kafka cluster.
+        """
+        topic_subname = os.environ["LSST_TOPIC_SUBNAME"]
+
+        delete_topics = await DeleteTopics.new()
+
+        delete_topics_args = DeleteTopicsArgs(
+            all_topics=False,
+            subname=topic_subname,
+            force=False,
+            dry=False,
+            log_level=None,
+            components=subsystems,
+        )
+
+        delete_topics.execute(delete_topics_args)
+
+        # Sleep some time to let the cluster have time to finish the deletion
+        await asyncio.sleep(5.0)
+
     @contextlib.asynccontextmanager
     async def create_csc_and_remote(self) -> typing.AsyncGenerator[None, None]:
         os.environ["LSST_TOPIC_SUBNAME"] = "test_attcpip"
