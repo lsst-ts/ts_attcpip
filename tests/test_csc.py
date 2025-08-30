@@ -21,8 +21,11 @@
 
 import asyncio
 import contextlib
+import logging
 import os
 import pathlib
+import random
+import string
 import typing
 import unittest
 from unittest import mock
@@ -71,6 +74,16 @@ DATA.configurationOverride = ""
 
 
 class CscTestCase(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        topic_subname = "test_attcpip_" + "".join(
+            random.choices(string.ascii_uppercase + string.digits, k=8)
+        )
+        logging.info(f"Setting {topic_subname=}")
+        os.environ["LSST_TOPIC_SUBNAME"] = topic_subname
+        os.environ["LSST_SITE"] = "test"
+        os.environ["LSST_DDS_PARTITION_PREFIX"] = "test"
+        attcpip.AtTcpipCsc.version = "UnitTest"
+
     async def asyncTearDown(self) -> None:
         """Runs after each test is completed.
 
@@ -78,6 +91,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         kafka cluster.
         """
         topic_subname = os.environ["LSST_TOPIC_SUBNAME"]
+        logging.info(f"Deleting topics for {topic_subname=}")
 
         delete_topics = await DeleteTopics.new()
 
@@ -97,11 +111,6 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
 
     @contextlib.asynccontextmanager
     async def create_csc_and_remote(self) -> typing.AsyncGenerator[None, None]:
-        os.environ["LSST_TOPIC_SUBNAME"] = "test_attcpip"
-        os.environ["LSST_SITE"] = "test"
-        os.environ["LSST_DDS_PARTITION_PREFIX"] = "test"
-        attcpip.AtTcpipCsc.version = "UnitTest"
-
         with mock.patch.object(salobj.Controller, "_assert_do_methods_present"):
             async with (
                 attcpip.AtTcpipCsc(
