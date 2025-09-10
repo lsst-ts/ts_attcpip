@@ -8,6 +8,24 @@ Version History
 
 .. towncrier release notes start
 
+v0.2.0 (2025-09-10)
+===================
+
+New Features
+------------
+
+- Added backward compatibility support for no failReason message. (`OSW-884 <https://rubinobs.atlassian.net//browse/OSW-884>`_)
+
+
+Performance Enhancement
+-----------------------
+
+- Added support for the failReason message. (`OSW-884 <https://rubinobs.atlassian.net//browse/OSW-884>`_)
+- Removed deprecated 'value' command argument. (`OSW-884 <https://rubinobs.atlassian.net//browse/OSW-884>`_)
+- Increased a log message for commands sent from DEBUG to INFO. (`OSW-884 <https://rubinobs.atlassian.net//browse/OSW-884>`_)
+- Made state transitions wait for AT summary state events. (`OSW-884 <https://rubinobs.atlassian.net//browse/OSW-884>`_)
+
+
 v0.1.15 (2025-08-19)
 ====================
 
