@@ -1,0 +1,1 @@
+Increased a log message for commands sent from DEBUG to INFO.

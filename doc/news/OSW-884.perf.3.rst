@@ -1,0 +1,1 @@
+Made state transitions wait for AT summary state events.

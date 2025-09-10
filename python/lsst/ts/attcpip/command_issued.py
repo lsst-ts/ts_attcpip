@@ -79,8 +79,16 @@ class CommandIssued:
         if not self.done.done():
             self.done.set_result(None)
 
-    def set_fail(self) -> None:
-        """Report a command as failed during execution."""
+    def set_fail(self, reason: str) -> None:
+        """Report a command as failed during execution.
+
+        Parameters
+        ----------
+        reason : `str`
+            The reason why the command failed.
+        """
         self.done_timestamp = utils.current_tai()
         if not self.done.done():
-            self.done.set_exception(RuntimeError(f"Command {self.name} failed."))
+            self.done.set_exception(
+                RuntimeError(f"Command {self.name} failed with {reason=!r}.")
+            )

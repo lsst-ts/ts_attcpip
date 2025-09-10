@@ -33,4 +33,8 @@ class RegistryTestCase(unittest.IsolatedAsyncioTestCase):
             attcpip.registry.pop(f"logevent_{evt}")
 
         # Make sure that no other commands are in the registry.
+        assert len(attcpip.registry) == 1
+
+        # The remaining entry is for the command fail reason.
+        attcpip.registry.pop("command_fail_reason")
         assert len(attcpip.registry) == 0
