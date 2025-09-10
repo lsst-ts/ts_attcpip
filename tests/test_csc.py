@@ -87,8 +87,10 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Runs after each test is completed.
 
-        This will delete all the topics and schema from the
-        kafka cluster.
+        This will delete all the topics and schema from the kafka cluster.
+
+        This function is needed because this test case is not a subclass of
+        the SalObj `BaseCscTestCase`.
         """
         topic_subname = os.environ["LSST_TOPIC_SUBNAME"]
         logging.info(f"Deleting topics for {topic_subname=}")

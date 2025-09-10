@@ -162,6 +162,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         self.config: types.SimpleNamespace | None = None
 
+        # Keep track of all background tasks.
+        self.background_tasks: set[asyncio.Future] = set()
+
     async def configure(self, config: typing.Any) -> None:
         self.config = config
 
@@ -190,7 +193,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
     async def wait_cmd_done(self, command: CommonCommand) -> None:
         """Write a command and wait for it to be reported as Done or Fail by
-        AT."""
+        AT.
+
+        Parameters
+        ----------
+        command : `CommonCommand`
+            The command to wait for.
+        """
         command_issued = await self.write_command(command=command)
         await self.wait_fututre_done_or_fault(future=command_issued.done)
 
@@ -493,9 +502,15 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.exception("Failed to stop telemetry client. Ignoring.")
 
     async def _start_commands_cleanup_task(self) -> None:
+        """Start the _cleanup_commands task."""
         self._commands_cleanup_task = asyncio.create_task(self._cleanup_commands())
 
     async def _cleanup_commands(self) -> None:
+        """Clean up references to pending commands.
+
+        This avoids building up a list of commands in memory that otherwise
+        potentially could lead to an Out Of Memory fault.
+        """
         while True:
             self.log.debug("Checking for pending commands.")
             now = utils.current_tai()
@@ -517,6 +532,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             await asyncio.sleep(CMD_DONE_TIMEOUT)
 
     async def _stop_commands_cleanup_task(self) -> None:
+        """Stop the _cleanup_commands task."""
         if not self._commands_cleanup_task.done():
             try:
                 self._commands_cleanup_task.cancel()
@@ -529,6 +545,12 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         If simulator_mode == 1 then the simulator gets stopped as well.
         """
         self.log.debug("Stopping clients.")
+
+        for task in self.background_tasks:
+            notyet_cancelled = task.cancel()
+            if notyet_cancelled:
+                await task
+
         await self._stop_telemetry_task_and_client()
         await self._stop_cmd_evt_task_and_client()
         await self._stop_commands_cleanup_task()
@@ -633,7 +655,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     del self.commands_issued[sequence_id]
                 case Ack.FAIL:
                     self.fail_reason_event.clear()
-                    asyncio.create_task(self.wait_fail_reason_event(sequence_id))
+                    # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+                    task = asyncio.create_task(self.wait_fail_reason_event(sequence_id))
+                    self.background_tasks.add(task)
+                    task.add_done_callback(self.background_tasks.discard)
                 case Ack.FAIL_REASON:
                     self.fail_reason_event.set()
                     reason = data[CommonCommandArgument.REASON]
@@ -652,6 +677,16 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             )
 
     async def wait_fail_reason_event(self, sequence_id: int) -> None:
+        """Wait for the fail reason event to arrive.
+
+        If the fail reason event doesn't arrive after FAIL_REASON_TIMEOUT the
+        issued command is set to FAIL without a reason.
+
+        Parameters
+        ----------
+        sequence_id : `int`
+            The ID of the issued command.
+        """
         try:
             async with asyncio.timeout(FAIL_REASON_TIMEOUT):
                 await self.fail_reason_event.wait()
