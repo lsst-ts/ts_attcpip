@@ -18,17 +18,22 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import asyncio
 import contextlib
+import logging
 import os
 import pathlib
+import random
+import string
 import typing
 import unittest
 from unittest import mock
 
 import yaml
 from lsst.ts import attcpip, salobj, tcpip
-from lsst.ts.xml import sal_enums
+from lsst.ts.salobj.delete_topics import DeleteTopics, DeleteTopicsArgs
+from lsst.ts.xml import sal_enums, subsystems
 
 CONFIG_DIR = pathlib.Path(__file__).parent / "data" / "config"
 CONFIG_SCHEMA = yaml.safe_load(
@@ -64,15 +69,50 @@ TIMEOUT = 1.0
 CMD_EVT_PORT = 5000
 TELEMETRY_PORT = 6000
 
+DATA = salobj.BaseMsgType()
+DATA.configurationOverride = ""
+
 
 class CscTestCase(unittest.IsolatedAsyncioTestCase):
-    @contextlib.asynccontextmanager
-    async def create_csc_and_remote(self) -> typing.AsyncGenerator[None, None]:
-        os.environ["LSST_TOPIC_SUBNAME"] = "test_attcpip"
+    async def asyncSetUp(self) -> None:
+        topic_subname = "test_attcpip_" + "".join(
+            random.choices(string.ascii_uppercase + string.digits, k=8)
+        )
+        logging.info(f"Setting {topic_subname=}")
+        os.environ["LSST_TOPIC_SUBNAME"] = topic_subname
         os.environ["LSST_SITE"] = "test"
         os.environ["LSST_DDS_PARTITION_PREFIX"] = "test"
         attcpip.AtTcpipCsc.version = "UnitTest"
 
+    async def asyncTearDown(self) -> None:
+        """Runs after each test is completed.
+
+        This will delete all the topics and schema from the kafka cluster.
+
+        This function is needed because this test case is not a subclass of
+        the SalObj `BaseCscTestCase`.
+        """
+        topic_subname = os.environ["LSST_TOPIC_SUBNAME"]
+        logging.info(f"Deleting topics for {topic_subname=}")
+
+        delete_topics = await DeleteTopics.new()
+
+        delete_topics_args = DeleteTopicsArgs(
+            all_topics=False,
+            subname=topic_subname,
+            force=False,
+            dry=False,
+            log_level=None,
+            components=subsystems,
+        )
+
+        delete_topics.execute(delete_topics_args)
+
+        # Sleep some time to let the cluster have time to finish the deletion
+        await asyncio.sleep(5.0)
+
+    @contextlib.asynccontextmanager
+    async def create_csc_and_remote(self) -> typing.AsyncGenerator[None, None]:
         with mock.patch.object(salobj.Controller, "_assert_do_methods_present"):
             async with (
                 attcpip.AtTcpipCsc(
@@ -96,6 +136,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         self,
         go_to_fault_state: bool,
         simulator_state: sal_enums.State = sal_enums.State.STANDBY,
+        send_fail_reason: bool = True,
     ) -> typing.AsyncGenerator[None, None]:
         with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
             async with attcpip.AtSimulator(
@@ -103,6 +144,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 cmd_evt_port=CMD_EVT_PORT,
                 telemetry_port=TELEMETRY_PORT,
                 simulator_state=simulator_state,
+                send_fail_reason=send_fail_reason,
             ) as self.simulator:
                 self.simulator.go_to_fault_state = go_to_fault_state
                 await self.simulator.cmd_evt_server.start_task
@@ -131,13 +173,10 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             ):
                 await self._validate_summary_state(sal_enums.State.STANDBY)
 
-                data = salobj.BaseMsgType()
-                data.configurationOverride = ""
-
                 # When the CSC starts, it will not progress the AT server
                 # state. It will connect to the AT server and receive the at
                 # server state so that can be verified.
-                await self.csc.do_start(data)
+                await self.csc.do_start(DATA)
                 assert self.csc.summary_state == sal_enums.State.DISABLED
                 assert self.csc.at_state == at_state
                 await self._validate_summary_state(sal_enums.State.DISABLED)
@@ -147,7 +186,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 # AT server until it is ENABLED. Depending on the start state
                 # the AT server will pass through various states, hence the
                 # ifs.
-                await self.csc.do_enable(data)
+                await self.csc.do_enable(DATA)
                 assert self.csc.summary_state == sal_enums.State.ENABLED
                 assert self.csc.at_state == sal_enums.State.ENABLED
                 await self._validate_summary_state(sal_enums.State.ENABLED)
@@ -163,13 +202,13 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                     await self._validate_crio_summary_state(sal_enums.State.ENABLED)
 
                 # From here on the AT server should follow the CSC states.
-                await self.csc.do_disable(data)
+                await self.csc.do_disable(DATA)
                 assert self.csc.summary_state == sal_enums.State.DISABLED
                 assert self.csc.at_state == sal_enums.State.DISABLED
                 await self._validate_summary_state(sal_enums.State.DISABLED)
                 await self._validate_crio_summary_state(sal_enums.State.DISABLED)
 
-                await self.csc.do_standby(data)
+                await self.csc.do_standby(DATA)
                 assert self.csc.summary_state == sal_enums.State.STANDBY
                 assert self.csc.at_state == sal_enums.State.STANDBY
                 await self._validate_summary_state(sal_enums.State.STANDBY)
@@ -186,13 +225,10 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             await self._validate_summary_state(sal_enums.State.STANDBY)
 
-            data = salobj.BaseMsgType()
-            data.configurationOverride = ""
-
             # When the CSC starts, it will not progress the AT server
             # state. It will connect to the AT server and receive the at
             # server state so that can be verified.
-            await self.csc.do_start(data)
+            await self.csc.do_start(DATA)
             assert self.csc.summary_state == sal_enums.State.DISABLED
             assert self.csc.at_state == sal_enums.State.STANDBY
             await self._validate_summary_state(sal_enums.State.DISABLED)
@@ -200,7 +236,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
 
             # Now the AT server reports it is in FAULT state so the CSC
             # should go to FAULT as well.
-            await self.csc.do_enable(data)
+            await self.csc.do_enable(DATA)
             assert self.csc.summary_state == sal_enums.State.FAULT
             assert self.csc.at_state == sal_enums.State.FAULT
             await self._validate_summary_state(sal_enums.State.FAULT)
@@ -215,26 +251,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY
             ),
         ):
-            await self._validate_summary_state(sal_enums.State.STANDBY)
-
-            data = salobj.BaseMsgType()
-            data.configurationOverride = ""
-
-            # When the CSC starts, it will not progress the AT server
-            # state. It will connect to the AT server and receive the at
-            # server state so that can be verified.
-            await self.csc.do_start(data)
-            assert self.csc.summary_state == sal_enums.State.DISABLED
-            assert self.csc.at_state == sal_enums.State.STANDBY
-            await self._validate_summary_state(sal_enums.State.DISABLED)
-            await self._validate_crio_summary_state(sal_enums.State.STANDBY)
-
-            # Now go to ENABLED which should go well.
-            await self.csc.do_enable(data)
-            assert self.csc.summary_state == sal_enums.State.ENABLED
-            assert self.csc.at_state == sal_enums.State.ENABLED
-            await self._validate_summary_state(sal_enums.State.ENABLED)
-            await self._validate_crio_summary_state(sal_enums.State.ENABLED)
+            await self._go_from_standby_to_enabled()
 
             # Now the simulator goes to DISABLED and the CSC should go to
             # FAULT.
@@ -244,6 +261,46 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             assert self.csc.at_state == sal_enums.State.DISABLED
             await self._validate_summary_state(sal_enums.State.FAULT)
             await self._validate_crio_summary_state(sal_enums.State.DISABLED)
+
+    async def test_go_to_enabled_with_fail(self) -> None:
+        """Test going to ENABLED and then going to ENABLED again which should
+        result in a FAIL."""
+        for send_fail_reason in [True, False]:
+            async with (
+                self.create_csc_and_remote(),
+                self.create_at_simulator(
+                    go_to_fault_state=False,
+                    simulator_state=sal_enums.State.STANDBY,
+                    send_fail_reason=send_fail_reason,
+                ),
+            ):
+
+                await self._go_from_standby_to_enabled()
+
+                await self.csc.wait_cmd_done(attcpip.CommonCommand.ENABLE)
+                if send_fail_reason:
+                    assert self.csc.fail_reason_event.is_set()
+                else:
+                    assert not self.csc.fail_reason_event.is_set()
+
+    async def _go_from_standby_to_enabled(self) -> None:
+        await self._validate_summary_state(sal_enums.State.STANDBY)
+
+        # When the CSC starts, it will not progress the AT server
+        # state. It will connect to the AT server and receive the at
+        # server state so that can be verified.
+        await self.csc.do_start(DATA)
+        assert self.csc.summary_state == sal_enums.State.DISABLED
+        assert self.csc.at_state == sal_enums.State.STANDBY
+        await self._validate_summary_state(sal_enums.State.DISABLED)
+        await self._validate_crio_summary_state(sal_enums.State.STANDBY)
+
+        # Now go to ENABLED which should go well.
+        await self.csc.do_enable(DATA)
+        assert self.csc.summary_state == sal_enums.State.ENABLED
+        assert self.csc.at_state == sal_enums.State.ENABLED
+        await self._validate_summary_state(sal_enums.State.ENABLED)
+        await self._validate_crio_summary_state(sal_enums.State.ENABLED)
 
     async def _validate_summary_state(self, summary_state: sal_enums.State) -> None:
         data = await self.remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
@@ -257,3 +314,4 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 flush=False, timeout=TIMEOUT
             )
             assert sal_enums.State(data.summaryState) == summary_state
+        assert self.csc.at_state_event.is_set()

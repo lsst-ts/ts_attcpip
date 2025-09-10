@@ -37,7 +37,7 @@ from .at_server_simulator import AtServerSimulator
 from .enums import Ack, CommonCommand, CommonCommandArgument, CommonEvent
 from .schemas import load_schemas, registry
 
-CMD_ITEMS_TO_IGNORE = frozenset({CommonCommandArgument.ID, CommonCommandArgument.VALUE})
+CMD_ITEMS_TO_IGNORE = frozenset({CommonCommandArgument.ID})
 
 
 class AtSimulator:
@@ -53,6 +53,9 @@ class AtSimulator:
         The telemetry port.
     simulator_state : `sal_enums.State`
         The summary state to start with.
+    send_fail_reason : `bool`
+        Send a fail reason for failed commands or not. Defaults to True. Unit
+        tests may set this to False.
     """
 
     def __init__(
@@ -61,6 +64,7 @@ class AtSimulator:
         cmd_evt_port: int,
         telemetry_port: int,
         simulator_state: sal_enums.State = sal_enums.State.STANDBY,
+        send_fail_reason: bool = True,
     ) -> None:
         self.log = logging.getLogger(type(self).__name__)
         self.cmd_evt_server = AtServerSimulator(
@@ -102,6 +106,9 @@ class AtSimulator:
 
         # Go to FAULT state when receiving the "start" command or not.
         self.go_to_fault_state = False
+
+        # Send a fail reason for failed commands or not.
+        self.send_fail_reason = send_fail_reason
 
         self.load_schemas()
 
@@ -249,7 +256,11 @@ class AtSimulator:
         if self.simulator_state not in [
             sal_enums.State.STANDBY,
         ]:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason="Command start failed",
+                error_details=f"simulator state != STANDBY but {self.simulator_state.name}.",
+            )
             return
 
         await self.write_success_response(sequence_id=sequence_id)
@@ -268,7 +279,11 @@ class AtSimulator:
         if self.simulator_state not in [
             sal_enums.State.ENABLED,
         ]:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason="Command disable failed",
+                error_details=f"simulator state != ENABLED but {self.simulator_state.name}.",
+            )
             return
 
         await self.write_success_response(sequence_id=sequence_id)
@@ -282,7 +297,12 @@ class AtSimulator:
         """Switch to sal_enums.State.ENABLED."""
         self.log.debug("Begin enable.")
         if self.simulator_state != sal_enums.State.DISABLED:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason="Command enable failed",
+                error_details=f"simulator state != DISABLED but {self.simulator_state.name}.",
+            )
+
             return
 
         await self.write_success_response(sequence_id=sequence_id)
@@ -299,7 +319,12 @@ class AtSimulator:
             sal_enums.State.FAULT,
             sal_enums.State.DISABLED,
         ]:
-            await self.write_fail_response(sequence_id=sequence_id)
+            await self.write_fail_response(
+                sequence_id=sequence_id,
+                reason="Command standby failed",
+                error_details=f"simulator state != FAULT or DISABLED but {self.simulator_state.name}.",
+            )
+
             return
 
         self.simulator_state = sal_enums.State.STANDBY
@@ -366,15 +391,34 @@ class AtSimulator:
         """
         await self._write_command_response(Ack.ACK, sequence_id)
 
-    async def write_fail_response(self, sequence_id: int) -> None:
+    async def write_fail_response(
+        self, sequence_id: int, reason: str, error_details: str
+    ) -> None:
         """Write a ``FAIL`` response.
 
         Parameters
         ----------
         sequence_id : `int`
             The command sequence id.
+        reason : `str`
+            The reason why the command failed.
+        error_details : `str`
+            Details of the error.
         """
         await self._write_command_response(Ack.FAIL, sequence_id)
+        if self.send_fail_reason:
+            data = {
+                CommonCommandArgument.ID: Ack.FAIL_REASON,
+                CommonCommandArgument.SEQUENCE_ID: sequence_id,
+                CommonCommandArgument.REASON: reason,
+                CommonCommandArgument.ERROR_DETAILS: error_details,
+            }
+            try:
+                await self.cmd_evt_server.write_json(data=data)
+            except Exception:
+                self.log.warning(
+                    f"Couldn't write {reason=} for {sequence_id=}. Ignoring."
+                )
 
     async def write_noack_response(self, sequence_id: int) -> None:
         """Write a ``NOACK`` response.
