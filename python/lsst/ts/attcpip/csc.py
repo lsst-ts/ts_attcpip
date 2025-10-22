@@ -596,6 +596,11 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             if self.expect_at_start_state_event:
                 self.at_connect_state = self.at_state
 
+            if hasattr(self, "evt_crioSummaryState"):
+                kwargs = {key: value for key, value in data.items() if key != "id"}
+                self.log.info(f"Sending evt_crioSummaryState with data {kwargs}.")
+                await self.evt_crioSummaryState.set_write(**kwargs)
+
             if (
                 not self.state_transition_ongoing
                 and not self.expect_at_start_state_event
@@ -607,16 +612,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     f"and state={sal_enums.State(data['summaryState']).name}."
                 )
                 await self.fault(code=None, report=message)
+
             if self.expect_at_start_state_event:
                 self.expect_at_start_state_event = False
 
             if self.at_state == sal_enums.State.FAULT and self.at_connect_state != sal_enums.State.FAULT:
                 self.fault_event.set()
                 await self.fault(code=None, report="AT in FAULT state.")
-            elif hasattr(self, "evt_crioSummaryState"):
-                kwargs = {key: value for key, value in data.items() if key != "id"}
-                self.log.debug(f"Sending evt_crioSummaryState with data {kwargs}.")
-                await self.evt_crioSummaryState.set_write(**kwargs)
         else:
             await self.call_set_write(data=data)
 
