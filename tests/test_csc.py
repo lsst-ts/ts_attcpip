@@ -66,8 +66,8 @@ CONFIG_SCHEMA = yaml.safe_load(
 TIMEOUT = 1.0
 
 # The ports for the simulator.
-CMD_EVT_PORT = 5000
-TELEMETRY_PORT = 6000
+CMD_EVT_PORT = 0
+TELEMETRY_PORT = 0
 
 DATA = salobj.BaseMsgType()
 DATA.configurationOverride = ""
