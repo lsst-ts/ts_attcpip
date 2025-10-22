@@ -182,9 +182,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         fault_event_task = asyncio.create_task(self.fault_event.wait())
         try:
             async with asyncio.timeout(self.cmd_done_timeout):
-                await asyncio.wait(
-                    [future, fault_event_task], return_when=asyncio.FIRST_COMPLETED
-                )
+                await asyncio.wait([future, fault_event_task], return_when=asyncio.FIRST_COMPLETED)
         except TimeoutError:
             self.log.warning(f"Timeout waiting for {future=}. Ignoring.")
         finally:
@@ -229,9 +227,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             await self.wait_fututre_done_or_fault(future=at_state_event_task)
         else:
             self.log.error(f"Unexpectedly {self.at_state=}. Going FAULT.")
-            await self.fault(
-                code=None, report=f"Server in unexpected state {self.at_state}."
-            )
+            await self.fault(code=None, report=f"Server in unexpected state {self.at_state}.")
 
     async def begin_disable(self, data: salobj.BaseMsgType) -> None:
         """Begin do_disable; called before state changes.
@@ -251,9 +247,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 expected_states=[sal_enums.State.STANDBY, sal_enums.State.ENABLED],
             )
         else:
-            await self.fault(
-                code=None, report=f"Not connected so not sending the {command} command."
-            )
+            await self.fault(code=None, report=f"Not connected so not sending the {command} command.")
 
     async def end_disable(self, data: salobj.BaseMsgType) -> None:
         """End do_disable; called after state changes
@@ -352,9 +346,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         command = CommonCommand.STANDBY
         if self.connected and self.summary_state != sal_enums.State.FAULT:
             if self.at_state == sal_enums.State.ENABLED:
-                await self.fault(
-                    code=None, report=f"Server in unexpected state {self.at_state}."
-                )
+                await self.fault(code=None, report=f"Server in unexpected state {self.at_state}.")
                 return
 
             await self.perform_common_part_of_state_transition(
@@ -364,9 +356,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.info("Disconnecting.")
             await self.stop_clients()
         else:
-            await self.fault(
-                code=None, report=f"Not connected so not sending the {command} command."
-            )
+            await self.fault(code=None, report=f"Not connected so not sending the {command} command.")
 
     async def end_standby(self, data: salobj.BaseMsgType) -> None:
         """End do_standby; called after state changes
@@ -409,9 +399,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 raise RuntimeError("Going to FAULT.")
                 return
         else:
-            await self.fault(
-                code=None, report=f"Not connected so not sending the {command} command."
-            )
+            await self.fault(code=None, report=f"Not connected so not sending the {command} command.")
         self.state_transition_ongoing = False
         self.log.debug(f"end_start and {self.state_transition_ongoing=}.")
 
@@ -460,18 +448,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
 
         # Do not call `await self.stop_clients()` here since that will stop
         # the simulator as well.
-        self.log.debug(
-            "Stop the clients and tasks in case the configuration has changed."
-        )
+        self.log.debug("Stop the clients and tasks in case the configuration has changed.")
         await self._stop_commands_cleanup_task()
         await self._stop_cmd_evt_task_and_client()
         await self._stop_telemetry_task_and_client()
 
         self.log.debug("Starting cmd_evt client.")
         self.expect_at_start_state_event = True
-        self.cmd_evt_client = tcpip.Client(
-            host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient"
-        )
+        self.cmd_evt_client = tcpip.Client(host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient")
         await self.cmd_evt_client.start_task
         self._event_task = asyncio.create_task(self.cmd_evt_loop())
 
@@ -626,10 +610,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             if self.expect_at_start_state_event:
                 self.expect_at_start_state_event = False
 
-            if (
-                self.at_state == sal_enums.State.FAULT
-                and self.at_connect_state != sal_enums.State.FAULT
-            ):
+            if self.at_state == sal_enums.State.FAULT and self.at_connect_state != sal_enums.State.FAULT:
                 self.fault_event.set()
                 await self.fault(code=None, report="AT in FAULT state.")
             elif hasattr(self, "evt_crioSummaryState"):
@@ -672,9 +653,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                 case _:
                     raise RuntimeError(f"Received unexpected {response=}.")
         else:
-            self.log.debug(
-                f"Received command response for unknown {sequence_id=}. Ignoring."
-            )
+            self.log.debug(f"Received command response for unknown {sequence_id=}. Ignoring.")
 
     async def wait_fail_reason_event(self, sequence_id: int) -> None:
         """Wait for the fail reason event to arrive.
@@ -691,9 +670,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             async with asyncio.timeout(FAIL_REASON_TIMEOUT):
                 await self.fail_reason_event.wait()
         except TimeoutError:
-            self.log.warning(
-                f"No failReason received for {sequence_id=}. Setting command to FAIL."
-            )
+            self.log.warning(f"No failReason received for {sequence_id=}. Setting command to FAIL.")
             self.commands_issued[sequence_id].set_fail(reason="No reason provided.")
             del self.commands_issued[sequence_id]
 
@@ -719,18 +696,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     try:
                         getattr(self, data_id)
                     except Exception:
-                        self.log.warning(
-                            f"Unknown telemetry topic {data_id}. Ignoring."
-                        )
+                        self.log.warning(f"Unknown telemetry topic {data_id}. Ignoring.")
                         self.unrecognized_telemetry_topics.add(data_id)
                     else:
                         await self.call_set_write(data=data)
             else:
                 await self.log.error(f"Received non-telemetry {data=}.")
 
-    async def write_command(
-        self, command: str, **params: dict[str, typing.Any]
-    ) -> CommandIssued:
+    async def write_command(self, command: str, **params: dict[str, typing.Any]) -> CommandIssued:
         """Write the command JSON string to the TCP/IP command/event server.
 
         Parameters
