@@ -49,8 +49,8 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
             async with attcpip.AtSimulator(
                 host=tcpip.LOCALHOST_IPV4,
-                cmd_evt_port=5000,
-                telemetry_port=6000,
+                cmd_evt_port=0,
+                telemetry_port=0,
                 simulator_state=simulator_state,
                 send_fail_reason=send_fail_reason,
             ) as self.simulator:
