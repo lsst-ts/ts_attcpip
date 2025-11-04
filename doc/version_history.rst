@@ -8,6 +8,22 @@ Version History
 
 .. towncrier release notes start
 
+v0.2.2 (2025-11-04)
+===================
+
+Performance Enhancement
+-----------------------
+
+- Made sure to always send the crioSummaryState event. (`OSW-1275 <https://rubinobs.atlassian.net//browse/OSW-1275>`_)
+- Made sure to let the simulator choose the TCP/IP ports. (`OSW-1275 <https://rubinobs.atlassian.net//browse/OSW-1275>`_)
+
+
+Other Changes and Additions
+---------------------------
+
+- Formatted code with ruff. (`OSW-1275 <https://rubinobs.atlassian.net//browse/OSW-1275>`_)
+
+
 v0.2.1 (2025-10-09)
 ===================
 
