@@ -66,8 +66,8 @@ CONFIG_SCHEMA = yaml.safe_load(
 TIMEOUT = 1.0
 
 # The ports for the simulator.
-CMD_EVT_PORT = 5000
-TELEMETRY_PORT = 6000
+CMD_EVT_PORT = 0
+TELEMETRY_PORT = 0
 
 DATA = salobj.BaseMsgType()
 DATA.configurationOverride = ""
@@ -75,9 +75,7 @@ DATA.configurationOverride = ""
 
 class CscTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        topic_subname = "test_attcpip_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=8)
-        )
+        topic_subname = "test_attcpip_" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
         logging.info(f"Setting {topic_subname=}")
         os.environ["LSST_TOPIC_SUBNAME"] = topic_subname
         os.environ["LSST_SITE"] = "test"
@@ -167,9 +165,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         ]:
             async with (
                 self.create_csc_and_remote(),
-                self.create_at_simulator(
-                    go_to_fault_state=False, simulator_state=at_state
-                ),
+                self.create_at_simulator(go_to_fault_state=False, simulator_state=at_state),
             ):
                 await self._validate_summary_state(sal_enums.State.STANDBY)
 
@@ -219,9 +215,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         start states but the AT server goes to FAULT."""
         async with (
             self.create_csc_and_remote(),
-            self.create_at_simulator(
-                go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY
-            ),
+            self.create_at_simulator(go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY),
         ):
             await self._validate_summary_state(sal_enums.State.STANDBY)
 
@@ -247,9 +241,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         but changing state unexpectedly. The CSC should go to FAULT."""
         async with (
             self.create_csc_and_remote(),
-            self.create_at_simulator(
-                go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY
-            ),
+            self.create_at_simulator(go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY),
         ):
             await self._go_from_standby_to_enabled()
 
@@ -274,7 +266,6 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                     send_fail_reason=send_fail_reason,
                 ),
             ):
-
                 await self._go_from_standby_to_enabled()
 
                 await self.csc.wait_cmd_done(attcpip.CommonCommand.ENABLE)
@@ -306,12 +297,8 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
         data = await self.remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
         assert sal_enums.State(data.summaryState) == summary_state
 
-    async def _validate_crio_summary_state(
-        self, summary_state: sal_enums.State
-    ) -> None:
+    async def _validate_crio_summary_state(self, summary_state: sal_enums.State) -> None:
         if hasattr(self.csc, "evt_crioSummaryState"):
-            data = await self.remote.evt_crioSummaryState.next(
-                flush=False, timeout=TIMEOUT
-            )
+            data = await self.remote.evt_crioSummaryState.next(flush=False, timeout=TIMEOUT)
             assert sal_enums.State(data.summaryState) == summary_state
         assert self.csc.at_state_event.is_set()
