@@ -1,1 +1,0 @@
-Made sure to always send the crioSummaryState event.
