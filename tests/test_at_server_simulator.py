@@ -57,9 +57,7 @@ class AtServerSimulatorTestCase(tcpip.BaseOneClientServerTestCase):
         self.data_event.set()
 
     async def test_read_and_dispatch(self) -> None:
-        async with self.create_at_server_simulator() as server, self.create_client(
-            server
-        ) as client:
+        async with self.create_at_server_simulator() as server, self.create_client(server) as client:
             self.data_event.clear()
             data = "Test."
             await client.write_json(data=data)

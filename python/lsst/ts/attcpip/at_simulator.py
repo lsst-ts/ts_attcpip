@@ -119,9 +119,7 @@ class AtSimulator:
         schema_dir = pathlib.Path(__file__).parent / "schemas"
         load_schemas(schema_dir=schema_dir)
 
-    async def base_cmd_evt_connect_callback(
-        self, server: tcpip.OneClientServer
-    ) -> None:
+    async def base_cmd_evt_connect_callback(self, server: tcpip.OneClientServer) -> None:
         """Callback to call when a command/event client connects or
         disconnects.
 
@@ -135,9 +133,7 @@ class AtSimulator:
         """
         await self.cmd_evt_connect_callback(server)
         if self.cmd_evt_server.connected:
-            self.log.debug(
-                f"Sending {CommonEvent.SUMMARY_STATE.value} with {self.simulator_state=}"
-            )
+            self.log.debug(f"Sending {CommonEvent.SUMMARY_STATE.value} with {self.simulator_state=}")
             await self._write_evt(
                 evt_id=CommonEvent.SUMMARY_STATE,
                 summaryState=self.simulator_state,
@@ -170,20 +166,14 @@ class AtSimulator:
         data_ok = await self.verify_data(data=data)
         if not data_ok:
             self.log.warning(f"Received incorrect {data=}.")
-            await self.write_noack_response(
-                sequence_id=data[CommonCommandArgument.SEQUENCE_ID]
-            )
+            await self.write_noack_response(sequence_id=data[CommonCommandArgument.SEQUENCE_ID])
             return
 
-        await self.write_ack_response(
-            sequence_id=data[CommonCommandArgument.SEQUENCE_ID]
-        )
+        await self.write_ack_response(sequence_id=data[CommonCommandArgument.SEQUENCE_ID])
 
         cmd = data[CommonCommandArgument.ID]
         func = self.dispatch_dict[cmd]
-        kwargs = {
-            key: value for key, value in data.items() if key not in CMD_ITEMS_TO_IGNORE
-        }
+        kwargs = {key: value for key, value in data.items() if key not in CMD_ITEMS_TO_IGNORE}
         await func(**kwargs)
 
     async def telemetry_connect_callback(self, server: tcpip.OneClientServer) -> None:
@@ -228,10 +218,7 @@ class AtSimulator:
             Whether the data follows the correct format and has the correct
             contents or not.
         """
-        if (
-            CommonCommandArgument.ID not in data
-            or CommonCommandArgument.SEQUENCE_ID not in data
-        ):
+        if CommonCommandArgument.ID not in data or CommonCommandArgument.SEQUENCE_ID not in data:
             self.log.error(f"Received invalid {data=}. Ignoring.")
             return False
         payload_id = data[CommonCommandArgument.ID].replace("cmd_", "command_")
@@ -268,9 +255,7 @@ class AtSimulator:
             await self.fault()
         else:
             self.simulator_state = sal_enums.State.DISABLED
-            await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-            )
+            await self._write_evt(evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state)
         self.log.debug("End start.")
 
     async def disable(self, *, sequence_id: int) -> None:
@@ -288,9 +273,7 @@ class AtSimulator:
 
         await self.write_success_response(sequence_id=sequence_id)
         self.simulator_state = sal_enums.State.DISABLED
-        await self._write_evt(
-            evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-        )
+        await self._write_evt(evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state)
         self.log.debug("End disable.")
 
     async def enable(self, *, sequence_id: int) -> None:
@@ -307,9 +290,7 @@ class AtSimulator:
 
         await self.write_success_response(sequence_id=sequence_id)
         self.simulator_state = sal_enums.State.ENABLED
-        await self._write_evt(
-            evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-        )
+        await self._write_evt(evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state)
         self.log.debug("End enable.")
 
     async def standby(self, *, sequence_id: int) -> None:
@@ -331,9 +312,7 @@ class AtSimulator:
 
         if self.cmd_evt_server.connected:
             await self.write_success_response(sequence_id=sequence_id)
-            await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state
-            )
+            await self._write_evt(evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state)
         self.log.debug("End standby.")
 
     async def send_detailed_state_events(self) -> None:
@@ -349,9 +328,7 @@ class AtSimulator:
         """Switch to sal_enums.State.FAULT."""
         await self.send_detailed_state_events()
         self.simulator_state = sal_enums.State.FAULT
-        await self._write_evt(
-            evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.FAULT
-        )
+        await self._write_evt(evt_id=CommonEvent.SUMMARY_STATE, summaryState=sal_enums.State.FAULT)
         await self._write_evt(
             evt_id=CommonEvent.ERROR_CODE,
             errorCode=-1,
@@ -377,9 +354,7 @@ class AtSimulator:
         try:
             await self.cmd_evt_server.write_json(data=data)
         except Exception:
-            self.log.warning(
-                f"Couldn't write {response=} for {sequence_id=}. Ignoring."
-            )
+            self.log.warning(f"Couldn't write {response=} for {sequence_id=}. Ignoring.")
 
     async def write_ack_response(self, sequence_id: int) -> None:
         """Write an ``ACK`` response.
@@ -391,9 +366,7 @@ class AtSimulator:
         """
         await self._write_command_response(Ack.ACK, sequence_id)
 
-    async def write_fail_response(
-        self, sequence_id: int, reason: str, error_details: str
-    ) -> None:
+    async def write_fail_response(self, sequence_id: int, reason: str, error_details: str) -> None:
         """Write a ``FAIL`` response.
 
         Parameters
@@ -416,9 +389,7 @@ class AtSimulator:
             try:
                 await self.cmd_evt_server.write_json(data=data)
             except Exception:
-                self.log.warning(
-                    f"Couldn't write {reason=} for {sequence_id=}. Ignoring."
-                )
+                self.log.warning(f"Couldn't write {reason=} for {sequence_id=}. Ignoring.")
 
     async def write_noack_response(self, sequence_id: int) -> None:
         """Write a ``NOACK`` response.

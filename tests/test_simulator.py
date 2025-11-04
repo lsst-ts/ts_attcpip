@@ -49,8 +49,8 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(attcpip.AtSimulator, "cmd_evt_connect_callback"):
             async with attcpip.AtSimulator(
                 host=tcpip.LOCALHOST_IPV4,
-                cmd_evt_port=5000,
-                telemetry_port=6000,
+                cmd_evt_port=0,
+                telemetry_port=0,
                 simulator_state=simulator_state,
                 send_fail_reason=send_fail_reason,
             ) as self.simulator:
@@ -72,9 +72,7 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
             log=self.log,
             name="CmdEvtClient",
         ) as self.cmd_evt_client:
-            await asyncio.wait_for(
-                simulator.cmd_evt_server.connected_task, timeout=TIMEOUT
-            )
+            await asyncio.wait_for(simulator.cmd_evt_server.connected_task, timeout=TIMEOUT)
             assert simulator.cmd_evt_server.connected
             assert self.cmd_evt_client.connected
 
@@ -108,18 +106,14 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
     async def verify_summary_state_event(self, state: sal_enums.State) -> None:
         data = await self.cmd_evt_client.read_json()
         assert attcpip.CommonCommandArgument.ID in data
-        assert (
-            data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.SUMMARY_STATE
-        )
+        assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.SUMMARY_STATE
         assert attcpip.CommonEventArgument.SUMMARY_STATE in data
         assert data[attcpip.CommonEventArgument.SUMMARY_STATE] == state
 
         if state == sal_enums.State.FAULT:
             data = await self.cmd_evt_client.read_json()
             assert attcpip.CommonCommandArgument.ID in data
-            assert (
-                data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.ERROR_CODE
-            )
+            assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.ERROR_CODE
             assert attcpip.CommonEventArgument.ERROR_CODE in data
             assert attcpip.CommonEventArgument.ERROR_REPORT in data
             assert attcpip.CommonEventArgument.TRACEBACK in data
@@ -138,19 +132,13 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 attcpip.CommonCommandArgument.SEQUENCE_ID: self.sequence_id,
             }
         )
-        await self.verify_command_response(
-            ack=attcpip.Ack.ACK, sequence_id=self.sequence_id
-        )
+        await self.verify_command_response(ack=attcpip.Ack.ACK, sequence_id=self.sequence_id)
 
         if expected_ack != attcpip.Ack.FAIL:
-            await self.verify_command_response(
-                ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id
-            )
+            await self.verify_command_response(ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id)
             await self.verify_summary_state_event(state=expected_state)
         else:
-            await self.verify_command_response(
-                ack=attcpip.Ack.FAIL, sequence_id=self.sequence_id
-            )
+            await self.verify_command_response(ack=attcpip.Ack.FAIL, sequence_id=self.sequence_id)
             if send_fail_reason:
                 async with asyncio.timeout(TIMEOUT):
                     await self.verify_command_fail_reason(sequence_id=self.sequence_id)
@@ -158,9 +146,10 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         assert self.simulator.simulator_state == expected_state
 
     async def test_stimulator_state_commands(self) -> None:
-        async with self.create_at_simulator(
-            go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY
-        ), self.create_cmd_evt_client(self.simulator, sal_enums.State.STANDBY):
+        async with (
+            self.create_at_simulator(go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY),
+            self.create_cmd_evt_client(self.simulator, sal_enums.State.STANDBY),
+        ):
             assert self.simulator.simulator_state == sal_enums.State.STANDBY
 
             commands_and_expected_states = {
@@ -176,9 +165,10 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_fault_state(self) -> None:
-        async with self.create_at_simulator(
-            go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY
-        ), self.create_cmd_evt_client(self.simulator, sal_enums.State.STANDBY):
+        async with (
+            self.create_at_simulator(go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY),
+            self.create_cmd_evt_client(self.simulator, sal_enums.State.STANDBY),
+        ):
             assert self.simulator.simulator_state == sal_enums.State.STANDBY
 
             command = attcpip.CommonCommand.START
@@ -207,9 +197,10 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 sal_enums.State.STANDBY,
             ),
         ]:
-            async with self.create_at_simulator(
-                go_to_fault_state=False, simulator_state=start_state
-            ), self.create_cmd_evt_client(self.simulator, start_state):
+            async with (
+                self.create_at_simulator(go_to_fault_state=False, simulator_state=start_state),
+                self.create_cmd_evt_client(self.simulator, start_state),
+            ):
                 assert self.simulator.simulator_state == start_state
 
                 # The first time it passes since the simulator state is not yet
@@ -238,11 +229,14 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 sal_enums.State.STANDBY,
             ),
         ]:
-            async with self.create_at_simulator(
-                go_to_fault_state=False,
-                simulator_state=start_state,
-                send_fail_reason=False,
-            ), self.create_cmd_evt_client(self.simulator, start_state):
+            async with (
+                self.create_at_simulator(
+                    go_to_fault_state=False,
+                    simulator_state=start_state,
+                    send_fail_reason=False,
+                ),
+                self.create_cmd_evt_client(self.simulator, start_state),
+            ):
                 assert self.simulator.simulator_state == start_state
 
                 # The first time it passes since the simulator state is not yet
@@ -251,9 +245,7 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
 
                 # The second time it fails since the simulator state now is the
                 # expected state.
-                await self.execute_command(
-                    command, expected_state, attcpip.Ack.FAIL, send_fail_reason=False
-                )
+                await self.execute_command(command, expected_state, attcpip.Ack.FAIL, send_fail_reason=False)
 
     async def test_summary_state_event(self) -> None:
         for state in [
@@ -262,7 +254,8 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
             sal_enums.State.ENABLED,
             sal_enums.State.FAULT,
         ]:
-            async with self.create_at_simulator(
-                go_to_fault_state=False, simulator_state=state
-            ), self.create_cmd_evt_client(self.simulator, state):
+            async with (
+                self.create_at_simulator(go_to_fault_state=False, simulator_state=state),
+                self.create_cmd_evt_client(self.simulator, state),
+            ):
                 assert self.simulator.simulator_state == state

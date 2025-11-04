@@ -69,9 +69,7 @@ class CommandIssued:
         """
         self.ack_timestamp = utils.current_tai()
         if not self.done.done():
-            self.done.set_exception(
-                RuntimeError(f"Command {self.name} was not acknowledged.")
-            )
+            self.done.set_exception(RuntimeError(f"Command {self.name} was not acknowledged."))
 
     def set_success(self) -> None:
         """Report a command as successfully executed."""
@@ -89,6 +87,4 @@ class CommandIssued:
         """
         self.done_timestamp = utils.current_tai()
         if not self.done.done():
-            self.done.set_exception(
-                RuntimeError(f"Command {self.name} failed with {reason=!r}.")
-            )
+            self.done.set_exception(RuntimeError(f"Command {self.name} failed with {reason=!r}."))

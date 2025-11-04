@@ -1,0 +1,1 @@
+Made sure to let the simulator choose the TCP/IP ports.
