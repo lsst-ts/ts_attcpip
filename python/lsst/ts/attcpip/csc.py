@@ -124,6 +124,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.cmd_evt_client = tcpip.Client(host="", port=None, log=self.log)
         self.telemetry_client = tcpip.Client(host="", port=None, log=self.log)
 
+        # Keep track of clients closing.
+        self.cmd_evt_client_stopping = False
+        self.telemetry_client_stopping = False
+
         # Simulator for simulation_mode == 1.
         self.simulator: AtServerSimulator | None = None
 
@@ -457,12 +461,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         await self._stop_telemetry_task_and_client()
 
         self.log.debug("Starting cmd_evt client.")
+        self.cmd_evt_client_stopping = False
         self.expect_at_start_state_event = True
         self.cmd_evt_client = tcpip.Client(host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient")
         await self.cmd_evt_client.start_task
         self._event_task = asyncio.create_task(self.cmd_evt_loop())
 
         self.log.debug("Starting telemetry client.")
+        self.telemetry_client_stopping = False
         self.telemetry_client = tcpip.Client(
             host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
         )
@@ -473,6 +479,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         await self._start_commands_cleanup_task()
 
     async def _stop_cmd_evt_task_and_client(self) -> None:
+        self.log.debug("Stopping cmd_evt client.")
+        self.cmd_evt_client_stopping = True
         if not self._event_task.done():
             self._event_task.cancel()
         try:
@@ -481,6 +489,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.exception("Failed to stop cmd_evt client. Ignoring.")
 
     async def _stop_telemetry_task_and_client(self) -> None:
+        self.log.debug("Stopping telemetry client.")
+        self.telemetry_client_stopping = True
         if not self._telemetry_task.done():
             self._telemetry_task.cancel()
         try:
@@ -561,12 +571,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         This loop waits for incoming command and event messages and processes
         them when they arrive.
         """
-        while self.connected:
+        while not self.cmd_evt_client_stopping:
             try:
                 data = await self.cmd_evt_client.read_json()
-            except asyncio.IncompleteReadError:
+            except (asyncio.IncompleteReadError, ConnectionError):
                 # Ignore.
                 data = {CommonCommandArgument.ID: "None"}
+                await asyncio.sleep(STANDARD_SHORT_WAIT)
             self.log.debug(f"Received cmd_evt {data=}")
             data_id: str = data[CommonCommandArgument.ID]
 
@@ -576,9 +587,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             elif CommonCommandArgument.SEQUENCE_ID in data:
                 await self._handle_command_response(data)
             else:
-                report = f"Received incorrect event or command {data=}."
-                self.log.error(report)
-                await self.fault(code=None, report=report)
+                if not self.cmd_evt_client_stopping:
+                    report = f"Received incorrect event or command {data=}."
+                    await self.fault(code=None, report=report)
 
     async def _handle_event(self, data: typing.Any, data_id: str) -> None:
         # Handle summary state and detailed state events.
@@ -707,12 +718,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         This loop waits for incoming telemetry messages and processes them when
         they arrive.
         """
-        while True:
+        while not self.telemetry_client_stopping:
             try:
                 data = await self.telemetry_client.read_json()
-            except asyncio.IncompleteReadError:
+            except (asyncio.IncompleteReadError, ConnectionError):
                 # Ignore.
                 data = {CommonCommandArgument.ID: "None"}
+                await asyncio.sleep(STANDARD_SHORT_WAIT)
             data_id = ""
             try:
                 data_id = data[CommonCommandArgument.ID]
@@ -728,7 +740,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     else:
                         await self.call_set_write(data=data)
             else:
-                self.log.error(f"Received non-telemetry {data=}.")
+                if not self.telemetry_client_stopping:
+                    report = f"Received incorrect telemetry {data=}."
+                    await self.fault(code=None, report=report)
 
     async def write_command(self, command: str, **params: dict[str, typing.Any]) -> CommandIssued:
         """Write the command JSON string to the TCP/IP command/event server.
