@@ -8,6 +8,22 @@ Version History
 
 .. towncrier release notes start
 
+v0.2.3 (2026-02-25)
+===================
+
+Performance Enhancement
+-----------------------
+
+- Improved command failure handling and logging. (`OSW-1872 <https://rubinobs.atlassian.net//browse/OSW-1872>`_)
+- Improved stopping of TCP/IP clients. (`OSW-1872 <https://rubinobs.atlassian.net//browse/OSW-1872>`_)
+
+
+Other Changes and Additions
+---------------------------
+
+- Fixed the documentation build. (`OSW-1872 <https://rubinobs.atlassian.net//browse/OSW-1872>`_)
+
+
 v0.2.2 (2025-11-04)
 ===================
 

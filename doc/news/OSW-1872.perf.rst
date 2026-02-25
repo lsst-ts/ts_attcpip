@@ -1,1 +1,0 @@
-Improved command failure handling and logging.
