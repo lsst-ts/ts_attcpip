@@ -24,9 +24,14 @@
 This configuration only affects single-package Sphinx documentation builds.
 """
 
-from documenteer.conf.pipelinespkg import *  # type: ignore # noqa
+import lsst.ts.attcpip  # noqa
+from documenteer.conf.guide import *  # noqa
 
 project = "ts_attcpip"
 html_theme_options["logotext"] = project  # type: ignore # noqa
 html_title = project
 html_short_title = project
+
+intersphinx_mapping["ts_salobj"] = ("https://ts-salobj.lsst.io", None)  # type: ignore # noqa
+intersphinx_mapping["ts_tcpip"] = ("https://ts-tcpip.lsst.io", None)  # type: ignore # noqa
+intersphinx_mapping["ts_utils"] = ("https://ts-utils.lsst.io", None)  # type: ignore # noqa

@@ -31,6 +31,7 @@ import unittest
 from unittest import mock
 
 import yaml
+
 from lsst.ts import attcpip, salobj, tcpip
 from lsst.ts.salobj.delete_topics import DeleteTopics, DeleteTopicsArgs
 from lsst.ts.xml import sal_enums, subsystems
@@ -255,8 +256,8 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             await self._validate_crio_summary_state(sal_enums.State.DISABLED)
 
     async def test_go_to_enabled_with_fail(self) -> None:
-        """Test going to ENABLED and then going to ENABLED again which should
-        result in a FAIL."""
+        """Test going to state ENABLED and then going to state ENABLED again
+        which should result in a FAIL."""
         for send_fail_reason in [True, False]:
             async with (
                 self.create_csc_and_remote(),
@@ -269,10 +270,9 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 await self._go_from_standby_to_enabled()
 
                 await self.csc.wait_cmd_done(attcpip.CommonCommand.ENABLE)
-                if send_fail_reason:
-                    assert self.csc.fail_reason_event.is_set()
-                else:
-                    assert not self.csc.fail_reason_event.is_set()
+
+                # Make sure no fail reason events remain queued.
+                assert len(self.csc.fail_reason_events) == 0
 
     async def _go_from_standby_to_enabled(self) -> None:
         await self._validate_summary_state(sal_enums.State.STANDBY)
