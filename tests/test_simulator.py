@@ -27,6 +27,7 @@ import unittest
 from unittest import mock
 
 import pytest
+
 from lsst.ts import attcpip, tcpip
 from lsst.ts.xml import sal_enums
 

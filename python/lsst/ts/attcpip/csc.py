@@ -54,6 +54,9 @@ AT_STATE_EVENT_WAIT_TIMEOUT = 5.0
 # Timeout [s] for commands to report they're done.
 CMD_DONE_TIMEOUT = 60.0
 
+# Standard short wait time [sec].
+STANDARD_SHORT_WAIT = 0.1
+
 
 class AtTcpipCsc(salobj.ConfigurableCsc):
     """Base Configurable CSC with common code.
@@ -121,6 +124,10 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.cmd_evt_client = tcpip.Client(host="", port=None, log=self.log)
         self.telemetry_client = tcpip.Client(host="", port=None, log=self.log)
 
+        # Keep track of clients closing.
+        self.cmd_evt_client_stopping = False
+        self.telemetry_client_stopping = False
+
         # Simulator for simulation_mode == 1.
         self.simulator: AtServerSimulator | None = None
 
@@ -141,7 +148,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.fault_event = asyncio.Event()
 
         # Event to indicate that a fail reason has arrived.
-        self.fail_reason_event = asyncio.Event()
+        self.fail_reason_events: dict[int, asyncio.Event] = {}
 
         # Keep track of the AT state for state transition commands.
         self.at_state = sal_enums.State.OFFLINE
@@ -454,12 +461,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         await self._stop_telemetry_task_and_client()
 
         self.log.debug("Starting cmd_evt client.")
+        self.cmd_evt_client_stopping = False
         self.expect_at_start_state_event = True
         self.cmd_evt_client = tcpip.Client(host=host, port=cmd_evt_port, log=self.log, name="CmdEvtClient")
         await self.cmd_evt_client.start_task
         self._event_task = asyncio.create_task(self.cmd_evt_loop())
 
         self.log.debug("Starting telemetry client.")
+        self.telemetry_client_stopping = False
         self.telemetry_client = tcpip.Client(
             host=host, port=telemetry_port, log=self.log, name="TelemetryClient"
         )
@@ -470,6 +479,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         await self._start_commands_cleanup_task()
 
     async def _stop_cmd_evt_task_and_client(self) -> None:
+        self.log.debug("Stopping cmd_evt client.")
+        self.cmd_evt_client_stopping = True
         if not self._event_task.done():
             self._event_task.cancel()
         try:
@@ -478,6 +489,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.exception("Failed to stop cmd_evt client. Ignoring.")
 
     async def _stop_telemetry_task_and_client(self) -> None:
+        self.log.debug("Stopping telemetry client.")
+        self.telemetry_client_stopping = True
         if not self._telemetry_task.done():
             self._telemetry_task.cancel()
         try:
@@ -498,20 +511,18 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         while True:
             self.log.debug("Checking for pending commands.")
             now = utils.current_tai()
-            sequence_ids_to_remove: list[int] = []
+            cmds: list[str] = []
             for sequence_id in self.commands_issued:
                 command_issued = self.commands_issued[sequence_id]
                 if now - command_issued.timestamp > CMD_DONE_TIMEOUT:
-                    sequence_ids_to_remove.append(sequence_id)
-
-            if len(sequence_ids_to_remove) > 0:
-                self.log.warning(
-                    f"Setting the commands with the following sequence_ids to FAIL: {sequence_ids_to_remove}"
-                )
-                for sequence_id in sequence_ids_to_remove:
-                    command_issued = self.commands_issued[sequence_id]
-                    command_issued.set_fail("No fail reason received.")
                     self.commands_issued.pop(sequence_id)
+                    command_issued.set_fail("No fail reason received.")
+                    cmds.append(f"{sequence_id} ({command_issued.name})")
+
+            if cmds:
+                self.log.warning(
+                    f"Setting the commands with the following sequence_ids to FAIL: {','.join(cmds)}"
+                )
 
             await asyncio.sleep(CMD_DONE_TIMEOUT)
 
@@ -560,12 +571,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         This loop waits for incoming command and event messages and processes
         them when they arrive.
         """
-        while self.connected:
+        while not self.cmd_evt_client_stopping:
             try:
                 data = await self.cmd_evt_client.read_json()
-            except asyncio.IncompleteReadError:
+            except (asyncio.IncompleteReadError, ConnectionError):
                 # Ignore.
                 data = {CommonCommandArgument.ID: "None"}
+                await asyncio.sleep(STANDARD_SHORT_WAIT)
             self.log.debug(f"Received cmd_evt {data=}")
             data_id: str = data[CommonCommandArgument.ID]
 
@@ -575,9 +587,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             elif CommonCommandArgument.SEQUENCE_ID in data:
                 await self._handle_command_response(data)
             else:
-                report = f"Received incorrect event or command {data=}."
-                self.log.error(report)
-                await self.fault(code=None, report=report)
+                if not self.cmd_evt_client_stopping:
+                    report = f"Received incorrect event or command {data=}."
+                    await self.fault(code=None, report=report)
 
     async def _handle_event(self, data: typing.Any, data_id: str) -> None:
         # Handle summary state and detailed state events.
@@ -627,30 +639,42 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         sequence_id = data[CommonCommandArgument.SEQUENCE_ID]
         response = data[CommonCommandArgument.ID]
         if sequence_id in self.commands_issued:
+            command_issued = self.commands_issued[sequence_id]
             match response:
                 case Ack.ACK:
-                    self.commands_issued[sequence_id].set_ack()
+                    command_issued.set_ack()
                 case Ack.NOACK:
-                    self.commands_issued[sequence_id].set_noack()
+                    command_issued.set_noack()
                     del self.commands_issued[sequence_id]
                 case Ack.SUCCESS:
-                    self.commands_issued[sequence_id].set_success()
+                    command_issued.set_success()
                     del self.commands_issued[sequence_id]
                 case Ack.FAIL:
-                    self.fail_reason_event.clear()
+                    self.log.error(
+                        f"Received FAIL response for command {command_issued.name} with {sequence_id=}."
+                    )
+                    self.log.debug(f"Adding fail reason event for {sequence_id=}")
+                    self.fail_reason_events[sequence_id] = asyncio.Event()
                     # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
                     task = asyncio.create_task(self.wait_fail_reason_event(sequence_id))
                     self.background_tasks.add(task)
                     task.add_done_callback(self.background_tasks.discard)
                 case Ack.FAIL_REASON:
-                    self.fail_reason_event.set()
+                    if sequence_id in self.fail_reason_events:
+                        self.log.debug(f"Popping fail reason event for {sequence_id=}")
+                        fail_reason_event = self.fail_reason_events.pop(sequence_id)
+                        fail_reason_event.set()
                     reason = data[CommonCommandArgument.REASON]
                     error_details = data[CommonCommandArgument.ERROR_DETAILS]
                     if error_details:
                         reason += f": {error_details}."
                     else:
                         reason += "."
-                    self.commands_issued[sequence_id].set_fail(reason=reason)
+                    self.log.error(
+                        f"Received FAIL reason {reason!r} for command {command_issued.name} "
+                        f"with {sequence_id=}."
+                    )
+                    command_issued.set_fail(reason=reason)
                     del self.commands_issued[sequence_id]
                 case _:
                     raise RuntimeError(f"Received unexpected {response=}.")
@@ -669,12 +693,24 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             The ID of the issued command.
         """
         try:
+            self.log.debug(f"Waiting for fail reason event for {sequence_id=} to be added.")
             async with asyncio.timeout(FAIL_REASON_TIMEOUT):
-                await self.fail_reason_event.wait()
+                while sequence_id not in self.fail_reason_events:
+                    await asyncio.sleep(STANDARD_SHORT_WAIT)
         except TimeoutError:
-            self.log.warning(f"No failReason received for {sequence_id=}. Setting command to FAIL.")
+            self.log.debug(f"No fail reason event for {sequence_id=} was added.")
+            return
+
+        try:
+            fail_reason_event = self.fail_reason_events[sequence_id]
+            self.log.debug(f"Waiting for fail reason event for {sequence_id=} to be set.")
+            async with asyncio.timeout(FAIL_REASON_TIMEOUT):
+                await fail_reason_event.wait()
+        except TimeoutError:
+            self.log.warning(f"No fail reason received for {sequence_id=}. Setting command to FAIL.")
             self.commands_issued[sequence_id].set_fail(reason="No reason provided.")
             del self.commands_issued[sequence_id]
+            del self.fail_reason_events[sequence_id]
 
     async def telemetry_loop(self) -> None:
         """Execute the telemetry loop.
@@ -682,12 +718,13 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         This loop waits for incoming telemetry messages and processes them when
         they arrive.
         """
-        while True:
+        while not self.telemetry_client_stopping:
             try:
                 data = await self.telemetry_client.read_json()
-            except asyncio.IncompleteReadError:
+            except (asyncio.IncompleteReadError, ConnectionError):
                 # Ignore.
                 data = {CommonCommandArgument.ID: "None"}
+                await asyncio.sleep(STANDARD_SHORT_WAIT)
             data_id = ""
             try:
                 data_id = data[CommonCommandArgument.ID]
@@ -703,7 +740,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     else:
                         await self.call_set_write(data=data)
             else:
-                await self.log.error(f"Received non-telemetry {data=}.")
+                if not self.telemetry_client_stopping:
+                    report = f"Received incorrect telemetry {data=}."
+                    await self.fault(code=None, report=report)
 
     async def write_command(self, command: str, **params: dict[str, typing.Any]) -> CommandIssued:
         """Write the command JSON string to the TCP/IP command/event server.

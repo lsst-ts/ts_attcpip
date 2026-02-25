@@ -30,6 +30,7 @@ import typing
 
 import jsonschema
 import numpy as np
+
 from lsst.ts import tcpip
 from lsst.ts.xml import sal_enums
 
