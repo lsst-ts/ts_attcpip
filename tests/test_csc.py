@@ -211,6 +211,8 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                 await self._validate_summary_state(sal_enums.State.STANDBY)
                 await self._validate_crio_summary_state(sal_enums.State.STANDBY)
 
+                assert len(self.csc.background_tasks) == 0
+
     async def test_complete_state_cycle_with_fault(self) -> None:
         """Test a complete state cycle with the AT server in different allowed
         start states but the AT server goes to FAULT."""
@@ -218,24 +220,9 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             self.create_csc_and_remote(),
             self.create_at_simulator(go_to_fault_state=True, simulator_state=sal_enums.State.STANDBY),
         ):
-            await self._validate_summary_state(sal_enums.State.STANDBY)
+            await self._go_from_standby_to_expected_state(sal_enums.State.FAULT)
 
-            # When the CSC starts, it will not progress the AT server
-            # state. It will connect to the AT server and receive the at
-            # server state so that can be verified.
-            await self.csc.do_start(DATA)
-            assert self.csc.summary_state == sal_enums.State.DISABLED
-            assert self.csc.at_state == sal_enums.State.STANDBY
-            await self._validate_summary_state(sal_enums.State.DISABLED)
-            await self._validate_crio_summary_state(sal_enums.State.STANDBY)
-
-            # Now the AT server reports it is in FAULT state so the CSC
-            # should go to FAULT as well.
-            await self.csc.do_enable(DATA)
-            assert self.csc.summary_state == sal_enums.State.FAULT
-            assert self.csc.at_state == sal_enums.State.FAULT
-            await self._validate_summary_state(sal_enums.State.FAULT)
-            await self._validate_crio_summary_state(sal_enums.State.FAULT)
+            assert len(self.csc.background_tasks) == 0
 
     async def test_complete_state_cycle_with_server_state_change(self) -> None:
         """Test a complete state cycle with the AT server in an allowed start
@@ -244,7 +231,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
             self.create_csc_and_remote(),
             self.create_at_simulator(go_to_fault_state=False, simulator_state=sal_enums.State.STANDBY),
         ):
-            await self._go_from_standby_to_enabled()
+            await self._go_from_standby_to_expected_state(sal_enums.State.ENABLED)
 
             # Now the simulator goes to DISABLED and the CSC should go to
             # FAULT.
@@ -258,6 +245,7 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_go_to_enabled_with_fail(self) -> None:
         """Test going to state ENABLED and then going to state ENABLED again
         which should result in a FAIL."""
+        cmd_done_timeout = 0.5
         for send_fail_reason in [True, False]:
             async with (
                 self.create_csc_and_remote(),
@@ -267,14 +255,19 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
                     send_fail_reason=send_fail_reason,
                 ),
             ):
-                await self._go_from_standby_to_enabled()
+                # Speed up cleanup of tasks without a reply.
+                self.csc.cmd_done_timeout = cmd_done_timeout
 
-                await self.csc.wait_cmd_done(attcpip.CommonCommand.ENABLE)
+                await self._go_from_standby_to_expected_state(sal_enums.State.ENABLED)
 
                 # Make sure no fail reason events remain queued.
                 assert len(self.csc.fail_reason_events) == 0
+                await asyncio.sleep(cmd_done_timeout)
+                assert len(self.csc.background_tasks) == 0
 
-    async def _go_from_standby_to_enabled(self) -> None:
+                await asyncio.sleep(5.0)
+
+    async def _go_from_standby_to_expected_state(self, expected_state: sal_enums.State) -> None:
         await self._validate_summary_state(sal_enums.State.STANDBY)
 
         # When the CSC starts, it will not progress the AT server
@@ -288,10 +281,10 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
 
         # Now go to ENABLED which should go well.
         await self.csc.do_enable(DATA)
-        assert self.csc.summary_state == sal_enums.State.ENABLED
-        assert self.csc.at_state == sal_enums.State.ENABLED
-        await self._validate_summary_state(sal_enums.State.ENABLED)
-        await self._validate_crio_summary_state(sal_enums.State.ENABLED)
+        assert self.csc.summary_state == expected_state
+        assert self.csc.at_state == expected_state
+        await self._validate_summary_state(expected_state)
+        await self._validate_crio_summary_state(expected_state)
 
     async def _validate_summary_state(self, summary_state: sal_enums.State) -> None:
         data = await self.remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
