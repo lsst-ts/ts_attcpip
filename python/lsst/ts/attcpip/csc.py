@@ -170,7 +170,7 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         self.config: types.SimpleNamespace | None = None
 
         # Keep track of all background tasks.
-        self.background_tasks: set[asyncio.Future] = set()
+        self.background_tasks: dict[int, asyncio.Future] = {}
 
     async def configure(self, config: typing.Any) -> None:
         self.config = config
@@ -191,7 +191,8 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             async with asyncio.timeout(self.cmd_done_timeout):
                 await asyncio.wait([future, fault_event_task], return_when=asyncio.FIRST_COMPLETED)
         except TimeoutError:
-            self.log.warning(f"Timeout waiting for {future=}. Ignoring.")
+            ex = future.exception()
+            self.log.warning(f"Timeout waiting for {future=}. Ignoring {ex}.")
         finally:
             if not fault_event_task.done():
                 fault_event_task.cancel()
@@ -512,19 +513,27 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             self.log.debug("Checking for pending commands.")
             now = utils.current_tai()
             cmds: list[str] = []
+            sequence_ids_to_remove: set[int] = set()
             for sequence_id in self.commands_issued:
                 command_issued = self.commands_issued[sequence_id]
-                if now - command_issued.timestamp > CMD_DONE_TIMEOUT:
-                    self.commands_issued.pop(sequence_id)
+                if now - command_issued.timestamp > self.cmd_done_timeout:
+                    sequence_ids_to_remove.add(sequence_id)
                     command_issued.set_fail("No fail reason received.")
                     cmds.append(f"{sequence_id} ({command_issued.name})")
+
+            # Clean up the in-memory lists/sets.
+            for sequence_id in sequence_ids_to_remove:
+                del self.commands_issued[sequence_id]
+                del self.fail_reason_events[sequence_id]
+                self.log.debug(f"Cleaning up background task for {sequence_id=}")
+                del self.background_tasks[sequence_id]
 
             if cmds:
                 self.log.warning(
                     f"Setting the commands with the following sequence_ids to FAIL: {','.join(cmds)}"
                 )
 
-            await asyncio.sleep(CMD_DONE_TIMEOUT)
+            await asyncio.sleep(self.cmd_done_timeout)
 
     async def _stop_commands_cleanup_task(self) -> None:
         """Stop the _cleanup_commands task."""
@@ -541,10 +550,17 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         self.log.debug("Stopping clients.")
 
-        for task in self.background_tasks:
+        for sequence_id in self.background_tasks:
+            self.log.debug(f"Canceling background task for {sequence_id=}")
+            task = self.background_tasks[sequence_id]
             notyet_cancelled = task.cancel()
             if notyet_cancelled:
                 await task
+
+        # Clean up in-memory lists/sets.
+        self.background_tasks.clear()
+        self.fail_reason_events.clear()
+        self.commands_issued.clear()
 
         await self._stop_telemetry_task_and_client()
         await self._stop_cmd_evt_task_and_client()
@@ -655,10 +671,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
                     )
                     self.log.debug(f"Adding fail reason event for {sequence_id=}")
                     self.fail_reason_events[sequence_id] = asyncio.Event()
-                    # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
                     task = asyncio.create_task(self.wait_fail_reason_event(sequence_id))
-                    self.background_tasks.add(task)
-                    task.add_done_callback(self.background_tasks.discard)
+                    self.log.debug(f"Adding background task for {sequence_id=}")
+                    self.background_tasks[sequence_id] = task
                 case Ack.FAIL_REASON:
                     if sequence_id in self.fail_reason_events:
                         self.log.debug(f"Popping fail reason event for {sequence_id=}")
@@ -707,10 +722,14 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
             async with asyncio.timeout(FAIL_REASON_TIMEOUT):
                 await fail_reason_event.wait()
         except TimeoutError:
-            self.log.warning(f"No fail reason received for {sequence_id=}. Setting command to FAIL.")
-            self.commands_issued[sequence_id].set_fail(reason="No reason provided.")
-            del self.commands_issued[sequence_id]
-            del self.fail_reason_events[sequence_id]
+            if sequence_id in self.commands_issued:
+                self.commands_issued[sequence_id].set_fail(reason="No reason provided.")
+                del self.commands_issued[sequence_id]
+            if sequence_id in self.fail_reason_events:
+                del self.fail_reason_events[sequence_id]
+            if sequence_id in self.background_tasks:
+                self.log.debug(f"Removing background task for {sequence_id=}")
+                del self.background_tasks[sequence_id]
 
     async def telemetry_loop(self) -> None:
         """Execute the telemetry loop.
