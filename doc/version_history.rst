@@ -8,6 +8,15 @@ Version History
 
 .. towncrier release notes start
 
+v0.2.4 (2026-03-11)
+===================
+
+Bug Fixes
+---------
+
+- Fixed a memory leak. (`OSW-1958 <https://rubinobs.atlassian.net//browse/OSW-1958>`_)
+
+
 v0.2.3 (2026-02-25)
 ===================
 
