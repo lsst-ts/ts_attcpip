@@ -61,6 +61,7 @@ class CommonEvent(enum.StrEnum):
 
     DETAILED_STATE = "evt_detailedState"
     ERROR_CODE = "evt_errorCode"
+    LOG_MESSAGE = "evt_logMessage"
     SUMMARY_STATE = "evt_summaryState"
 
 
