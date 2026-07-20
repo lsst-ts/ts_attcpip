@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["AtSimulator"]
 
 import logging
+import os
 import pathlib
 import types
 import typing
@@ -31,7 +32,7 @@ import typing
 import jsonschema
 import numpy as np
 
-from lsst.ts import tcpip
+from lsst.ts import tcpip, utils
 from lsst.ts.xml import sal_enums
 
 from .at_server_simulator import AtServerSimulator
@@ -134,10 +135,20 @@ class AtSimulator:
         """
         await self.cmd_evt_connect_callback(server)
         if self.cmd_evt_server.connected:
-            self.log.debug(f"Sending {CommonEvent.SUMMARY_STATE.value} with {self.simulator_state=}")
+            message = f"Sending {CommonEvent.SUMMARY_STATE.value} with {self.simulator_state=}"
+            self.log.debug(message)
+            await self._write_evt(evt_id=CommonEvent.SUMMARY_STATE, summaryState=self.simulator_state)
             await self._write_evt(
-                evt_id=CommonEvent.SUMMARY_STATE,
-                summaryState=self.simulator_state,
+                evt_id=CommonEvent.LOG_MESSAGE,
+                name="AtSimulator",
+                level=logging.INFO,
+                message=message,
+                traceback="",
+                filePath=__file__,
+                functionName="base_cmd_evt_connect_callback",
+                lineNumber=144,
+                process=os.getpid(),
+                timestamp=utils.current_tai(),
             )
 
     async def cmd_evt_connect_callback(self, server: tcpip.OneClientServer) -> None:

@@ -183,32 +183,6 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
     def connected(self) -> bool:
         return self.cmd_evt_client.connected
 
-    async def wait_fututre_done_or_fault(self, future: asyncio.Future) -> None:
-        """Wait for either the future to be done or for the CSC to go to
-        FAULT, whichever comes first."""
-        fault_event_task = asyncio.create_task(self.fault_event.wait())
-        try:
-            async with asyncio.timeout(self.cmd_done_timeout):
-                await asyncio.wait([future, fault_event_task], return_when=asyncio.FIRST_COMPLETED)
-        except TimeoutError:
-            ex = future.exception()
-            self.log.warning(f"Timeout waiting for {future=}. Ignoring {ex}.")
-        finally:
-            if not fault_event_task.done():
-                fault_event_task.cancel()
-
-    async def wait_cmd_done(self, command: CommonCommand) -> None:
-        """Write a command and wait for it to be reported as Done or Fail by
-        AT.
-
-        Parameters
-        ----------
-        command : `CommonCommand`
-            The command to wait for.
-        """
-        command_issued = await self.write_command(command=command)
-        await self.wait_fututre_done_or_fault(future=command_issued.done)
-
     async def perform_common_part_of_state_transition(
         self,
         command: CommonCommand,
@@ -228,11 +202,26 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         """
         self.log.info(f"perform_common_part_of_state_transition with {command=}.")
         if self.at_state in expected_states:
+            command_issued = await self.write_command(command=command)
             self.at_state_event.clear()
-            await self.wait_cmd_done(command)
-
             at_state_event_task = asyncio.create_task(self.at_state_event.wait())
-            await self.wait_fututre_done_or_fault(future=at_state_event_task)
+            fault_event_task = asyncio.create_task(self.fault_event.wait())
+
+            try:
+                async with asyncio.timeout(self.cmd_done_timeout):
+                    await asyncio.wait(
+                        [command_issued.done, at_state_event_task, fault_event_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+            except TimeoutError:
+                self.log.warning(
+                    f"Timeout waiting for {command=}. Ignoring and proceeding with state transition."
+                )
+            finally:
+                if not fault_event_task.done():
+                    fault_event_task.cancel()
+                if not at_state_event_task.done():
+                    at_state_event_task.cancel()
         else:
             self.log.error(f"Unexpectedly {self.at_state=}. Going FAULT.")
             await self.fault(code=None, report=f"Server in unexpected state {self.at_state}.")
@@ -823,6 +812,9 @@ class AtTcpipCsc(salobj.ConfigurableCsc):
         send_failure = False
         if attr is not None:
             if name.startswith("evt_"):
+                if name == CommonEvent.LOG_MESSAGE.value:
+                    kwargs["message"] = "cRIO: " + kwargs["message"]
+                    kwargs["name"] = "cRIO: " + kwargs["name"]
                 self.log.debug(f"Sending {name=} with {kwargs=}")
             try:
                 await attr.set_write(**kwargs)
