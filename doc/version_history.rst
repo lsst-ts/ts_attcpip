@@ -8,6 +8,15 @@ Version History
 
 .. towncrier release notes start
 
+v0.3.0 (2026-07-20)
+===================
+
+Performance Enhancement
+-----------------------
+
+- Added support for evt_logMessage. (`OSW-2377 <https://rubinobs.atlassian.net//browse/OSW-2377>`_)
+
+
 v0.2.4 (2026-03-11)
 ===================
 
