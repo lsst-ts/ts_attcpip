@@ -1,0 +1,58 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "id": {
+            "const": "evt_logMessage"
+        },
+        "name": {
+            "type": "string",
+            "description": "Log name."
+        },
+        "level": {
+            "type": "number",
+            "description": "Message level, a Python logging level: error=40, warning=30, info=20, debug=10."
+        },
+        "message": {
+            "type": "string",
+            "description": "Log message."
+        },
+        "traceback": {
+            "type": "string",
+            "description": "Exception traceback; Empty string if not an exception."
+        },
+        "filePath": {
+            "type": "string",
+            "description": "Path to source file."
+        },
+        "functionName": {
+            "type": "string",
+            "description": "Function or method name."
+        },
+        "lineNumber": {
+            "type": "number",
+            "description": "Line number in the file specified by filePath."
+        },
+        "process": {
+            "type": "number",
+            "description": "Process ID."
+        },
+        "timestamp": {
+            "type": "number",
+            "description": "The time at which the condition being reported was observed (TAI unix seconds). 0 if unspecified."
+        }
+    },
+    "required": [
+        "id",
+        "name",
+        "level",
+        "message",
+        "traceback",
+        "filePath",
+        "functionName",
+        "lineNumber",
+        "process",
+        "timestamp"
+    ],
+    "additionalProperties": false
+}

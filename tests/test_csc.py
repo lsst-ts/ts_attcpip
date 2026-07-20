@@ -289,6 +289,8 @@ class CscTestCase(unittest.IsolatedAsyncioTestCase):
     async def _validate_summary_state(self, summary_state: sal_enums.State) -> None:
         data = await self.remote.evt_summaryState.next(flush=False, timeout=TIMEOUT)
         assert sal_enums.State(data.summaryState) == summary_state
+        data = await self.remote.evt_logMessage.next(flush=False, timeout=TIMEOUT)
+        assert data.level in [logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG]
 
     async def _validate_crio_summary_state(self, summary_state: sal_enums.State) -> None:
         if hasattr(self.csc, "evt_crioSummaryState"):

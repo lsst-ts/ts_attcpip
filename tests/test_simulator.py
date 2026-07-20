@@ -105,19 +105,29 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         assert data[attcpip.CommonCommandArgument.SEQUENCE_ID] == sequence_id
 
     async def verify_summary_state_event(self, state: sal_enums.State) -> None:
-        data = await self.cmd_evt_client.read_json()
-        assert attcpip.CommonCommandArgument.ID in data
-        assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.SUMMARY_STATE
-        assert attcpip.CommonEventArgument.SUMMARY_STATE in data
-        assert data[attcpip.CommonEventArgument.SUMMARY_STATE] == state
-
-        if state == sal_enums.State.FAULT:
+        # Verify the summary state event.
+        async with asyncio.timeout(TIMEOUT):
             data = await self.cmd_evt_client.read_json()
             assert attcpip.CommonCommandArgument.ID in data
-            assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.ERROR_CODE
-            assert attcpip.CommonEventArgument.ERROR_CODE in data
-            assert attcpip.CommonEventArgument.ERROR_REPORT in data
-            assert attcpip.CommonEventArgument.TRACEBACK in data
+            assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.SUMMARY_STATE
+            assert attcpip.CommonEventArgument.SUMMARY_STATE in data
+            assert data[attcpip.CommonEventArgument.SUMMARY_STATE] == state
+
+        if state == sal_enums.State.FAULT:
+            async with asyncio.timeout(TIMEOUT):
+                data = await self.cmd_evt_client.read_json()
+                assert attcpip.CommonCommandArgument.ID in data
+                assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.ERROR_CODE
+                assert attcpip.CommonEventArgument.ERROR_CODE in data
+                assert attcpip.CommonEventArgument.ERROR_REPORT in data
+                assert attcpip.CommonEventArgument.TRACEBACK in data
+
+    async def verify_log_message_event(self) -> None:
+        # Verify the log message.
+        async with asyncio.timeout(TIMEOUT):
+            data = await self.cmd_evt_client.read_json()
+            assert attcpip.CommonCommandArgument.ID in data
+            assert data[attcpip.CommonCommandArgument.ID] == attcpip.CommonEvent.LOG_MESSAGE
 
     async def execute_command(
         self,
@@ -125,6 +135,7 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
         expected_state: sal_enums.State,
         expected_ack: attcpip.Ack,
         send_fail_reason: bool = True,
+        expect_log_event: bool = True,
     ) -> None:
         self.sequence_id += 1
         await self.cmd_evt_client.write_json(
@@ -133,12 +144,14 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
                 attcpip.CommonCommandArgument.SEQUENCE_ID: self.sequence_id,
             }
         )
-        await self.verify_command_response(ack=attcpip.Ack.ACK, sequence_id=self.sequence_id)
-
         if expected_ack != attcpip.Ack.FAIL:
+            if expect_log_event:
+                await self.verify_log_message_event()
+            await self.verify_command_response(ack=attcpip.Ack.ACK, sequence_id=self.sequence_id)
             await self.verify_command_response(ack=attcpip.Ack.SUCCESS, sequence_id=self.sequence_id)
             await self.verify_summary_state_event(state=expected_state)
         else:
+            await self.verify_command_response(ack=attcpip.Ack.ACK, sequence_id=self.sequence_id)
             await self.verify_command_response(ack=attcpip.Ack.FAIL, sequence_id=self.sequence_id)
             if send_fail_reason:
                 async with asyncio.timeout(TIMEOUT):
@@ -161,8 +174,14 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
             }
 
             for command in commands_and_expected_states:
+                expect_log_event = False
+                if command == attcpip.CommonCommand.START:
+                    expect_log_event = True
                 await self.execute_command(
-                    command, commands_and_expected_states[command], attcpip.Ack.SUCCESS
+                    command,
+                    commands_and_expected_states[command],
+                    attcpip.Ack.SUCCESS,
+                    expect_log_event=expect_log_event,
                 )
 
     async def test_fault_state(self) -> None:
@@ -178,7 +197,7 @@ class SimulatorTest(unittest.IsolatedAsyncioTestCase):
 
             command = attcpip.CommonCommand.STANDBY
             expected_state = sal_enums.State.STANDBY
-            await self.execute_command(command, expected_state, attcpip.Ack.SUCCESS)
+            await self.execute_command(command, expected_state, attcpip.Ack.SUCCESS, expect_log_event=False)
 
     async def test_failed_state_transition(self) -> None:
         for start_state, command, expected_state in [
